@@ -2,7 +2,7 @@ name: Supply-chain security
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, security/phase0]
   push:
     branches: [main, security/phase0]
   workflow_dispatch:
