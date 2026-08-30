@@ -272,7 +272,7 @@ func TestGatewaySessionStatusAndStaticBoundaryExposeNoCredentials(t *testing.T) 
 		t.Fatal("browser credentials reached the static server")
 	}
 
-	for _, path := range []string{"/favicon.ico", "/favicon.svg", "/logo.svg", "/theme-init.js"} {
+	for _, path := range []string{"/LICENSE.txt", "/favicon.ico", "/favicon.svg", "/logo.svg", "/theme-init.js"} {
 		assetReq := httptest.NewRequest(http.MethodGet, path, nil)
 		assetReq.Host = "dashboard.example.test"
 		assetRecorder := httptest.NewRecorder()
@@ -291,6 +291,41 @@ func TestGatewaySessionStatusAndStaticBoundaryExposeNoCredentials(t *testing.T) 
 	}
 }
 
+func TestGatewayPublishesCorrespondingSourceWithoutAuthentication(t *testing.T) {
+	store := newMemorySessionStore()
+	auth := &fakeAuthClient{}
+	manager := newSessionManager(store, auth)
+	handler := testGateway(t, manager, auth, &captureTransport{}, &captureTransport{})
+
+	for _, path := range []string{sourceCodePath, wellKnownSourceCodePath} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "dashboard.example.test"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", path, rec.Code)
+		}
+		body := rec.Body.String()
+		for _, required := range []string{
+			"Source code",
+			"https://github.com/Song367/pug/tree/onlyf-phase0-20260830",
+			"https://github.com/Song367/pug-app/tree/onlyf-phase0-20260830",
+			"/LICENSE.txt",
+		} {
+			if !strings.Contains(body, required) {
+				t.Fatalf("%s response omitted %q", path, required)
+			}
+		}
+		if got := rec.Header().Values("Link"); len(got) != 2 {
+			t.Fatalf("%s Link headers = %v", path, got)
+		}
+		if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "default-src 'none'") {
+			t.Fatal("source page omitted restrictive CSP")
+		}
+	}
+}
+
 func testGateway(
 	t *testing.T,
 	manager *sessionManager,
@@ -302,8 +337,11 @@ func testGateway(
 	publicOrigin, _ := url.Parse("https://dashboard.example.test")
 	apiUpstream, _ := url.Parse("http://pug-server:3000")
 	staticUpstream, _ := url.Parse("http://dashboard:8080")
+	sourceCode, _ := url.Parse("https://github.com/Song367/pug/tree/onlyf-phase0-20260830")
+	dashboardSourceCode, _ := url.Parse("https://github.com/Song367/pug-app/tree/onlyf-phase0-20260830")
 	return newGateway(resolvedConfig{
 		publicOrigin: publicOrigin, apiUpstream: apiUpstream, staticUpstream: staticUpstream,
+		sourceCode: sourceCode, dashboardSourceCode: dashboardSourceCode,
 	}, manager, auth, apiTransport, staticTransport)
 }
 

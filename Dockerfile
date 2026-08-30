@@ -45,6 +45,7 @@ FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a
 WORKDIR /app
 COPY --from=build /out/app /app/app
 COPY --from=build /out/healthcheck /app/healthcheck
+COPY --from=build /src/LICENSE /licenses/Pug-LICENSE
 # Documents the default server port (PUG_SERVER_PORT). Informational only.
 EXPOSE 3000
 USER nonroot:nonroot
@@ -60,6 +61,7 @@ WORKDIR /app
 COPY --from=build /src/schema/nats ./schema/nats
 COPY --from=build /out/app /app/app
 COPY --from=build /out/healthcheck /app/healthcheck
+COPY --from=build /src/LICENSE /licenses/Pug-LICENSE
 USER nonroot:nonroot
 ENTRYPOINT ["/app/app"]
 
@@ -71,5 +73,6 @@ COPY --from=build /src/schema/postgres/migrations   ./schema/postgres/migrations
 COPY --from=build /src/schema/clickhouse/migrations ./schema/clickhouse/migrations
 COPY --from=build /src/schema/nats                  ./schema/nats
 COPY --from=build /out/app /app/app
+COPY --from=build /src/LICENSE /licenses/Pug-LICENSE
 USER nonroot:nonroot
 ENTRYPOINT ["/app/app"]

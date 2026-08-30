@@ -18,6 +18,9 @@ not a remote deployment manifest.
   no snapshot schedule, no replica, no HTTP API, and no version phone-home.
 - The public collector accepts only `BatchCreate`, caps request bodies at 1 MiB,
   strips untrusted proxy headers, and terminates TLS.
+- Collector responses advertise the exact corresponding backend source through
+  `rel="source"`; `/source` and `/.well-known/source-code` redirect to the same
+  immutable public release tag without touching the analytics upstream.
 - The Dashboard is served through a same-origin TLS Session Gateway. Raw
   access/refresh tokens are encrypted in Dragonfly; the browser receives only
   a `Secure`, `HttpOnly`, `SameSite=Strict` `__Host-pug_session` cookie, and
@@ -25,6 +28,9 @@ not a remote deployment manifest.
 - Dashboard routing exposes only the required Dashboard/Public services. SDK
   ingestion, MCP, reflection, and unknown dotted service paths are not reachable
   through the Dashboard origin.
+- The Dashboard sign-in surface and authenticated sidebar link to the public
+  `/source` page, which lists the exact backend and Dashboard release tags and
+  the bundled GNU AGPL license. Update both source URLs for every promoted image.
 - Demo and destructive seed modes are disabled. Operator bootstrap is an
   explicit, one-shot profile that refuses a non-empty database.
 - Every upstream data image is pinned by multi-platform repository digest.

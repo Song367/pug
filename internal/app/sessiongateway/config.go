@@ -12,23 +12,27 @@ import (
 const encryptionKeyBytes = 32
 
 type config struct {
-	Environment       string `env:"PUG_ENVIRONMENT,required"`
-	Addr              string `env:"PUG_SESSION_GATEWAY_ADDR,default=:8443"`
-	PublicOrigin      string `env:"PUG_SESSION_GATEWAY_PUBLIC_ORIGIN,required"`
-	APIUpstreamURL    string `env:"PUG_SESSION_GATEWAY_API_UPSTREAM_URL,required"`
-	StaticUpstreamURL string `env:"PUG_SESSION_GATEWAY_STATIC_UPSTREAM_URL,required"`
-	TLSCertFile       string `env:"PUG_SESSION_GATEWAY_TLS_CERT_FILE,required"`
-	TLSKeyFile        string `env:"PUG_SESSION_GATEWAY_TLS_KEY_FILE,required"`
-	RedisURL          string `env:"REDIS_URL,required"`
-	EncryptionKeyHex  string `env:"PUG_SESSION_ENCRYPTION_KEY,required"`
+	Environment            string `env:"PUG_ENVIRONMENT,required"`
+	Addr                   string `env:"PUG_SESSION_GATEWAY_ADDR,default=:8443"`
+	PublicOrigin           string `env:"PUG_SESSION_GATEWAY_PUBLIC_ORIGIN,required"`
+	APIUpstreamURL         string `env:"PUG_SESSION_GATEWAY_API_UPSTREAM_URL,required"`
+	StaticUpstreamURL      string `env:"PUG_SESSION_GATEWAY_STATIC_UPSTREAM_URL,required"`
+	SourceCodeURL          string `env:"PUG_SOURCE_CODE_URL,required"`
+	DashboardSourceCodeURL string `env:"PUG_DASHBOARD_SOURCE_CODE_URL,required"`
+	TLSCertFile            string `env:"PUG_SESSION_GATEWAY_TLS_CERT_FILE,required"`
+	TLSKeyFile             string `env:"PUG_SESSION_GATEWAY_TLS_KEY_FILE,required"`
+	RedisURL               string `env:"REDIS_URL,required"`
+	EncryptionKeyHex       string `env:"PUG_SESSION_ENCRYPTION_KEY,required"`
 }
 
 type resolvedConfig struct {
 	config
-	publicOrigin   *url.URL
-	apiUpstream    *url.URL
-	staticUpstream *url.URL
-	encryptionKey  []byte
+	publicOrigin        *url.URL
+	apiUpstream         *url.URL
+	staticUpstream      *url.URL
+	sourceCode          *url.URL
+	dashboardSourceCode *url.URL
+	encryptionKey       []byte
 }
 
 func (c config) validate() (resolvedConfig, error) {
@@ -60,6 +64,14 @@ func (c config) validate() (resolvedConfig, error) {
 	if err != nil {
 		return resolvedConfig{}, fmt.Errorf("PUG_SESSION_GATEWAY_STATIC_UPSTREAM_URL: %w", err)
 	}
+	sourceCode, err := parseSourceCodeURL(c.SourceCodeURL)
+	if err != nil {
+		return resolvedConfig{}, fmt.Errorf("PUG_SOURCE_CODE_URL: %w", err)
+	}
+	dashboardSourceCode, err := parseSourceCodeURL(c.DashboardSourceCodeURL)
+	if err != nil {
+		return resolvedConfig{}, fmt.Errorf("PUG_DASHBOARD_SOURCE_CODE_URL: %w", err)
+	}
 
 	key, err := hex.DecodeString(strings.TrimSpace(c.EncryptionKeyHex))
 	if err != nil || len(key) != encryptionKeyBytes {
@@ -70,12 +82,23 @@ func (c config) validate() (resolvedConfig, error) {
 	}
 
 	return resolvedConfig{
-		config:         c,
-		publicOrigin:   publicOrigin,
-		apiUpstream:    apiUpstream,
-		staticUpstream: staticUpstream,
-		encryptionKey:  key,
+		config:              c,
+		publicOrigin:        publicOrigin,
+		apiUpstream:         apiUpstream,
+		staticUpstream:      staticUpstream,
+		sourceCode:          sourceCode,
+		dashboardSourceCode: dashboardSourceCode,
+		encryptionKey:       key,
 	}, nil
+}
+
+func parseSourceCodeURL(raw string) (*url.URL, error) {
+	value, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || value.Scheme != "https" || value.Host == "" || value.User != nil ||
+		value.RawQuery != "" || value.Fragment != "" {
+		return nil, errors.New("must be an absolute HTTPS URL without credentials, query, or fragment")
+	}
+	return value, nil
 }
 
 func parseOrigin(raw string, requireHTTPS bool) (*url.URL, error) {

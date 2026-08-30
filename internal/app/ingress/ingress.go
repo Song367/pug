@@ -28,7 +28,11 @@ import (
 	"github.com/sethvargo/go-envconfig"
 )
 
-const maxBodyBytes = 1 << 20
+const (
+	maxBodyBytes        = 1 << 20
+	sourceCodePath      = "/source"
+	wellKnownSourcePath = "/.well-known/source-code"
+)
 
 var ingressRejectedCounter metric.Int64Counter
 
@@ -47,6 +51,7 @@ type config struct {
 	UpstreamURL      string `env:"PUG_INGRESS_UPSTREAM_URL,required"`
 	TLSCertFile      string `env:"PUG_INGRESS_TLS_CERT_FILE,required"`
 	TLSKeyFile       string `env:"PUG_INGRESS_TLS_KEY_FILE,required"`
+	SourceCodeURL    string `env:"PUG_SOURCE_CODE_URL,required"`
 	TrustEdgeHeaders bool   `env:"PUG_INGRESS_TRUST_EDGE_HEADERS,default=false"`
 	KeyRate          int    `env:"PUG_INGRESS_KEY_RATE,default=200"`
 	KeyBurst         int    `env:"PUG_INGRESS_KEY_BURST,default=400"`
@@ -79,6 +84,9 @@ func (c *config) validate() (*url.URL, error) {
 	upstream, err := url.Parse(c.UpstreamURL)
 	if err != nil || (upstream.Scheme != "http" && upstream.Scheme != "https") || upstream.Host == "" || upstream.User != nil || (upstream.Path != "" && upstream.Path != "/") || upstream.RawQuery != "" || upstream.Fragment != "" {
 		return nil, errors.New("PUG_INGRESS_UPSTREAM_URL must be an http(s) origin without credentials, path, query, or fragment")
+	}
+	if _, err := parseSourceCodeURL(c.SourceCodeURL); err != nil {
+		return nil, fmt.Errorf("PUG_SOURCE_CODE_URL: %w", err)
 	}
 	for name, value := range map[string]int{
 		"PUG_INGRESS_KEY_RATE":        c.KeyRate,
@@ -179,10 +187,15 @@ func redirectHandler(publicURL url.URL) http.Handler {
 type handler struct {
 	proxy            *httputil.ReverseProxy
 	guard            *pogrpc.IngestGuard
+	sourceCodeURL    string
 	trustEdgeHeaders bool
 }
 
 func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper) (*handler, error) {
+	sourceCodeURL, err := parseSourceCodeURL(cfg.SourceCodeURL)
+	if err != nil {
+		return nil, fmt.Errorf("PUG_SOURCE_CODE_URL: %w", err)
+	}
 	guard, err := pogrpc.NewIngestGuard(pogrpc.IngestGuardConfig{
 		ProjectRate:        cfg.KeyRate,
 		ProjectBurst:       cfg.KeyBurst,
@@ -210,13 +223,26 @@ func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper) (*ha
 		},
 		Transport: transport,
 	}
-	return &handler{proxy: proxy, guard: guard, trustEdgeHeaders: cfg.TrustEdgeHeaders}, nil
+	return &handler{
+		proxy:            proxy,
+		guard:            guard,
+		sourceCodeURL:    sourceCodeURL.String(),
+		trustEdgeHeaders: cfg.TrustEdgeHeaders,
+	}, nil
 }
 
 type clientIPContextKey struct{}
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	setResponseSecurityHeaders(w.Header())
+	setResponseSecurityHeaders(w.Header(), h.sourceCodeURL)
+	if r.URL.Path == sourceCodePath || r.URL.Path == wellKnownSourcePath {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			h.reject(w, r, http.StatusMethodNotAllowed, "method", "method not allowed")
+			return
+		}
+		http.Redirect(w, r, h.sourceCodeURL, http.StatusPermanentRedirect)
+		return
+	}
 	if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -279,10 +305,21 @@ func writeGatewayError(w http.ResponseWriter, status int, message string) {
 	http.Error(w, message, status)
 }
 
-func setResponseSecurityHeaders(h http.Header) {
+func setResponseSecurityHeaders(h http.Header, sourceCodeURL string) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+	h.Set("Link", "<"+sourceCodeURL+">; rel=\"source\"")
+}
+
+func parseSourceCodeURL(raw string) (*url.URL, error) {
+	value, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || value.Scheme != "https" || value.Host == "" || value.User != nil ||
+		value.RawQuery != "" || value.Fragment != "" {
+		return nil, errors.New("must be an absolute HTTPS URL without credentials, query, or fragment")
+	}
+	return value, nil
 }
 
 func resolveClientIP(r *http.Request, trustEdgeHeaders bool) (string, bool) {

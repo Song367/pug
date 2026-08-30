@@ -294,6 +294,7 @@ services:
       PUG_INGRESS_UPSTREAM_URL: "http://server:3000"
       PUG_INGRESS_TLS_CERT_FILE: "/run/pug-tls/localhost.crt"
       PUG_INGRESS_TLS_KEY_FILE: "/run/pug-tls/localhost.key"
+      PUG_SOURCE_CODE_URL: "https://github.com/Song367/pug/tree/onlyf-phase0-20260830"
       PUG_INGRESS_TRUST_EDGE_HEADERS: "false"
       PUG_INGRESS_KEY_RATE: "200"
       PUG_INGRESS_KEY_BURST: "400"
@@ -368,6 +369,8 @@ services:
       PUG_SESSION_GATEWAY_PUBLIC_ORIGIN: "https://localhost:${PUG_L1_DASHBOARD_HTTPS_PORT:-15443}"
       PUG_SESSION_GATEWAY_API_UPSTREAM_URL: "http://server:3000"
       PUG_SESSION_GATEWAY_STATIC_UPSTREAM_URL: "http://dashboard:8080"
+      PUG_SOURCE_CODE_URL: "https://github.com/Song367/pug/tree/onlyf-phase0-20260830"
+      PUG_DASHBOARD_SOURCE_CODE_URL: "https://github.com/Song367/pug-app/tree/onlyf-phase0-20260830"
       PUG_SESSION_GATEWAY_TLS_CERT_FILE: "/run/pug-tls/localhost.crt"
       PUG_SESSION_GATEWAY_TLS_KEY_FILE: "/run/pug-tls/localhost.key"
     volumes:

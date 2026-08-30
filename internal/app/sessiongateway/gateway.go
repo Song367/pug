@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -26,17 +27,54 @@ import (
 	"github.com/pug-sh/pug/internal/gen/proto/shared/profiles/v1/profilesv1connect"
 )
 
-const sessionStatusPath = "/_pug/session"
+const (
+	sessionStatusPath       = "/_pug/session"
+	sourceCodePath          = "/source"
+	wellKnownSourceCodePath = "/.well-known/source-code"
+)
+
+var sourcePageTemplate = template.Must(template.New("source-code").Parse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pug source code</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+    main { width: min(42rem, calc(100% - 3rem)); padding: 3rem 0; }
+    p { line-height: 1.65; color: color-mix(in srgb, CanvasText 72%, transparent); }
+    ul { display: grid; gap: .75rem; padding: 0; list-style: none; }
+    a { color: LinkText; text-underline-offset: .2em; }
+    .source { display: block; padding: 1rem 1.125rem; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: .875rem; text-decoration: none; }
+    .source:hover { background: color-mix(in srgb, CanvasText 5%, transparent); }
+    small { display: block; margin-top: 2rem; line-height: 1.5; color: color-mix(in srgb, CanvasText 58%, transparent); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Source code</h1>
+    <p>This deployment runs modified versions of Pug under the GNU Affero General Public License. The corresponding source for this release is available at no charge:</p>
+    <ul>
+      <li><a class="source" href="{{.BackendURL}}">Pug server, collector, workers, and session gateway</a></li>
+      <li><a class="source" href="{{.DashboardURL}}">Pug Dashboard</a></li>
+    </ul>
+    <small>License: <a href="/LICENSE.txt">GNU AGPL v3 or later</a>. These links identify the source release corresponding to the deployed build.</small>
+  </main>
+</body>
+</html>`))
 
 type sessionContextKey struct{}
 
 type gateway struct {
-	publicOrigin *url.URL
-	sessions     *sessionManager
-	authHandler  http.Handler
-	apiProxy     *httputil.ReverseProxy
-	publicProxy  *httputil.ReverseProxy
-	staticProxy  *httputil.ReverseProxy
+	publicOrigin           *url.URL
+	sessions               *sessionManager
+	authHandler            http.Handler
+	apiProxy               *httputil.ReverseProxy
+	publicProxy            *httputil.ReverseProxy
+	staticProxy            *httputil.ReverseProxy
+	sourceCodeURL          string
+	dashboardSourceCodeURL string
 }
 
 func newGateway(
@@ -51,18 +89,22 @@ func newGateway(
 		connect.WithReadMaxBytes(64<<10),
 	)
 	g := &gateway{
-		publicOrigin: cfg.publicOrigin,
-		sessions:     sessions,
-		authHandler:  authHandler,
-		apiProxy:     newAPIProxy(cfg.apiUpstream, apiTransport, true),
-		publicProxy:  newAPIProxy(cfg.apiUpstream, apiTransport, false),
-		staticProxy:  newStaticProxy(cfg.staticUpstream, staticTransport),
+		publicOrigin:           cfg.publicOrigin,
+		sessions:               sessions,
+		authHandler:            authHandler,
+		apiProxy:               newAPIProxy(cfg.apiUpstream, apiTransport, true),
+		publicProxy:            newAPIProxy(cfg.apiUpstream, apiTransport, false),
+		staticProxy:            newStaticProxy(cfg.staticUpstream, staticTransport),
+		sourceCodeURL:          cfg.sourceCode.String(),
+		dashboardSourceCodeURL: cfg.dashboardSourceCode.String(),
 	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", http.HandlerFunc(g.liveness))
 	mux.Handle("/readyz", http.HandlerFunc(g.readiness))
 	mux.Handle(sessionStatusPath, http.HandlerFunc(g.sessionStatus))
+	mux.Handle(sourceCodePath, http.HandlerFunc(g.sourceCode))
+	mux.Handle(wellKnownSourceCodePath, http.HandlerFunc(g.sourceCode))
 	mux.Handle(authPath, g.requireSameOrigin(g.authHandler))
 	mux.Handle(servicePath(publicdashboardsv1connect.SharedDashboardsServiceName), g.requireSameOrigin(g.publicProxy))
 
@@ -81,7 +123,28 @@ func newGateway(
 	}
 	mux.Handle("/", http.HandlerFunc(g.static))
 
-	return securityHeaders(g.requirePublicHost(rpc.WithRequestLimits(mux)))
+	return securityHeaders(g.requirePublicHost(rpc.WithRequestLimits(mux)), g.sourceCodeURL, g.dashboardSourceCodeURL)
+}
+
+func (g *gateway) sourceCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writePlainError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	h := w.Header()
+	h.Set("Cache-Control", "public, max-age=300")
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := sourcePageTemplate.Execute(w, map[string]string{
+		"BackendURL":   g.sourceCodeURL,
+		"DashboardURL": g.dashboardSourceCodeURL,
+	}); err != nil {
+		return
+	}
 }
 
 func (g *gateway) liveness(w http.ResponseWriter, r *http.Request) {
@@ -333,14 +396,14 @@ func isForbiddenGatewayPath(path string) bool {
 	// Vite also emits a small, fixed set of root-level static files; allow only
 	// those exact public assets and keep every other dotted path closed.
 	switch path {
-	case "/apple-touch-icon.png", "/favicon.ico", "/favicon.svg", "/google.svg", "/index.html", "/logo.svg", "/theme-init.js":
+	case "/LICENSE.txt", "/apple-touch-icon.png", "/favicon.ico", "/favicon.svg", "/google.svg", "/index.html", "/logo.svg", "/theme-init.js":
 		return false
 	default:
 		return true
 	}
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(next http.Handler, sourceCodeURLs ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -350,6 +413,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()")
+		for _, sourceCodeURL := range sourceCodeURLs {
+			h.Add("Link", "<"+sourceCodeURL+">; rel=\"source\"")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

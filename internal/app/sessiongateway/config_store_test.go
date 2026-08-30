@@ -8,15 +8,17 @@ import (
 
 func TestConfigFailsClosed(t *testing.T) {
 	valid := config{
-		Environment:       "test",
-		Addr:              ":8443",
-		PublicOrigin:      "https://dashboard.example.test",
-		APIUpstreamURL:    "http://server:3000",
-		StaticUpstreamURL: "http://dashboard:8080",
-		TLSCertFile:       "/run/tls/tls.crt",
-		TLSKeyFile:        "/run/tls/tls.key",
-		RedisURL:          "redis://redis:6379",
-		EncryptionKeyHex:  "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+		Environment:            "test",
+		Addr:                   ":8443",
+		PublicOrigin:           "https://dashboard.example.test",
+		APIUpstreamURL:         "http://server:3000",
+		StaticUpstreamURL:      "http://dashboard:8080",
+		SourceCodeURL:          "https://github.com/Song367/pug/tree/onlyf-phase0-20260830",
+		DashboardSourceCodeURL: "https://github.com/Song367/pug-app/tree/onlyf-phase0-20260830",
+		TLSCertFile:            "/run/tls/tls.crt",
+		TLSKeyFile:             "/run/tls/tls.key",
+		RedisURL:               "redis://redis:6379",
+		EncryptionKeyHex:       "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
 	}
 	if _, err := valid.validate(); err != nil {
 		t.Fatalf("valid config: %v", err)
@@ -25,6 +27,8 @@ func TestConfigFailsClosed(t *testing.T) {
 		"non-HTTPS public origin": func(c *config) { c.PublicOrigin = "http://dashboard.example.test" },
 		"origin path":             func(c *config) { c.PublicOrigin += "/login" },
 		"upstream credentials":    func(c *config) { c.APIUpstreamURL = "http://user:pass@server:3000" },
+		"insecure source URL":     func(c *config) { c.SourceCodeURL = "http://github.com/Song367/pug" },
+		"source URL credentials":  func(c *config) { c.DashboardSourceCodeURL = "https://user:pass@github.com/Song367/pug-app" },
 		"short key":               func(c *config) { c.EncryptionKeyHex = "abcd" },
 		"repeated key":            func(c *config) { c.EncryptionKeyHex = strings.Repeat("aa", encryptionKeyBytes) },
 		"unknown environment":     func(c *config) { c.Environment = "staging" },

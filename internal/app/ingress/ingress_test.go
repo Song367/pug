@@ -47,14 +47,15 @@ func (t *captureTransport) snapshot() (*http.Request, string, int) {
 
 func testConfig() config {
 	return config{
-		Environment: "test",
-		HTTPAddr:    ":8080",
-		HTTPSAddr:   ":8443",
-		PublicHost:  "collector.example.test",
-		UpstreamURL: "http://pug-server:3000",
-		TLSCertFile: "/run/tls/tls.crt",
-		TLSKeyFile:  "/run/tls/tls.key",
-		KeyRate:     10, KeyBurst: 10,
+		Environment:   "test",
+		HTTPAddr:      ":8080",
+		HTTPSAddr:     ":8443",
+		PublicHost:    "collector.example.test",
+		UpstreamURL:   "http://pug-server:3000",
+		TLSCertFile:   "/run/tls/tls.crt",
+		TLSKeyFile:    "/run/tls/tls.key",
+		SourceCodeURL: "https://github.com/Song367/pug/tree/onlyf-phase0-20260830",
+		KeyRate:       10, KeyBurst: 10,
 		IPRate: 10, IPBurst: 10,
 		KeyConcurrency: 2, IPConcurrency: 2,
 	}
@@ -111,6 +112,35 @@ func TestIngressForwardsOnlyAllowlistedHeadersAndKernelPeer(t *testing.T) {
 	}
 	if forwarded.Header.Get("X-Api-Key") != "pub_test" || forwarded.Header.Get("Content-Type") != "application/proto" {
 		t.Fatal("required Connect headers were not forwarded")
+	}
+	if got := rec.Header().Get("Link"); got != `<https://github.com/Song367/pug/tree/onlyf-phase0-20260830>; rel="source"` {
+		t.Fatalf("source link header = %q", got)
+	}
+}
+
+func TestIngressPublishesCorrespondingSourceWithoutCallingUpstream(t *testing.T) {
+	for _, path := range []string{sourceCodePath, wellKnownSourcePath} {
+		t.Run(path, func(t *testing.T) {
+			capture := &captureTransport{}
+			h := makeHandler(t, testConfig(), capture)
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.RemoteAddr = "192.0.2.10:4321"
+			rec := httptest.NewRecorder()
+
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusPermanentRedirect {
+				t.Fatalf("status = %d, want 308", rec.Code)
+			}
+			if got := rec.Header().Get("Location"); got != testConfig().SourceCodeURL {
+				t.Fatalf("Location = %q", got)
+			}
+			if got := rec.Header().Get("Link"); got != `<https://github.com/Song367/pug/tree/onlyf-phase0-20260830>; rel="source"` {
+				t.Fatalf("Link = %q", got)
+			}
+			if _, _, calls := capture.snapshot(); calls != 0 {
+				t.Fatal("source request reached the collector upstream")
+			}
+		})
 	}
 }
 
@@ -275,6 +305,8 @@ func TestIngressConfigAndTLSFailClosed(t *testing.T) {
 		"same listener":        func(c *config) { c.HTTPAddr = c.HTTPSAddr },
 		"host injection":       func(c *config) { c.PublicHost = "example.test/path" },
 		"upstream credentials": func(c *config) { c.UpstreamURL = "http://user:pass@pug:3000" },
+		"insecure source URL":  func(c *config) { c.SourceCodeURL = "http://github.com/Song367/pug" },
+		"source URL query":     func(c *config) { c.SourceCodeURL += "?token=must-not-appear" },
 		"zero rate":            func(c *config) { c.IPRate = 0 },
 	} {
 		t.Run(name, func(t *testing.T) {
