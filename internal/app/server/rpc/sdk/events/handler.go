@@ -43,6 +43,7 @@ var (
 	cookielessDroppedCounter         metric.Int64Counter
 	cookielessSessionDegradedCounter metric.Int64Counter
 	cookielessIdentitySourceCounter  metric.Int64Counter
+	ingestRejectedCounter            metric.Int64Counter
 )
 
 func init() {
@@ -70,6 +71,10 @@ func init() {
 	cookielessSessionDegradedCounter, _ = meter.Int64Counter(
 		"events.cookieless_session_degraded_total",
 		metric.WithDescription("A cookieless event could not be stitched from Redis session state. reason=get_failed/mint_failed/write_failed fell back to the deterministic one-session-per-visitor-day id; reason=slide_failed kept the correct id but could not advance its last-activity watermark (reads working while writes fail — OOM or a read-only replica — which re-splits the session on later events). Data is intact either way; session metrics coarsen. A sustained mint_failed means Redis < 7.0, which rejects SET NX GET outright."),
+	)
+	ingestRejectedCounter, _ = meter.Int64Counter(
+		"events.ingest_rejected_total",
+		metric.WithDescription("An authenticated ingest request was rejected by the in-process second-layer guard. reason=rate_limit means a project/client token bucket was empty; reason=concurrency_limit means an active-request ceiling was reached."),
 	)
 }
 
@@ -159,23 +164,41 @@ type identityResolver interface {
 
 type Server struct {
 	eventsv1connect.UnimplementedEventsServiceHandler
-	publisher   *coreevents.Publisher
-	geoProvider geo.Provider
-	uaParser    *useragent.Parser
-	cookieless  identityResolver
+	publisher         *coreevents.Publisher
+	geoProvider       geo.Provider
+	uaParser          *useragent.Parser
+	cookieless        identityResolver
+	ingestGuard       *rpc.IngestGuard
+	trustProxyHeaders bool
+}
+
+type ServerOption func(*Server)
+
+// WithIngestGuard enables the authenticated, in-process rate and concurrency
+// guard. Proxy headers affect the client bucket only when a private gateway has
+// been explicitly configured as the trust boundary.
+func WithIngestGuard(guard *rpc.IngestGuard, trustProxyHeaders bool) ServerOption {
+	return func(server *Server) {
+		server.ingestGuard = guard
+		server.trustProxyHeaders = trustProxyHeaders
+	}
 }
 
 // NewServer takes identityResolver rather than *cookieless.Resolver so the nil
 // guard in resolveCookieless can fire: assigning a nil *Resolver to an interface
 // field yields a NON-nil interface, which skips the guard and nil-derefs on the
 // first cookieless event instead of returning the intended error.
-func NewServer(producer jetstream.JetStream, geoProvider geo.Provider, uaParser *useragent.Parser, resolver identityResolver) *Server {
-	return &Server{
+func NewServer(producer jetstream.JetStream, geoProvider geo.Provider, uaParser *useragent.Parser, resolver identityResolver, opts ...ServerOption) *Server {
+	server := &Server{
 		publisher:   coreevents.NewPublisher(producer),
 		geoProvider: geoProvider,
 		uaParser:    uaParser,
 		cookieless:  resolver,
 	}
+	for _, opt := range opts {
+		opt(server)
+	}
+	return server
 }
 
 func (s *Server) BatchCreate(
@@ -189,6 +212,29 @@ func (s *Server) BatchCreate(
 	principal, err := rpc.MustGetPrincipalWithProject(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if s.ingestGuard != nil {
+		release, reason := s.ingestGuard.Acquire(
+			principal.Project.ID,
+			rpc.IngestClientKey(req.Header(), req.Peer().Addr, s.trustProxyHeaders),
+		)
+		if reason != rpc.IngestLimitNone {
+			ingestRejectedCounter.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("project_id", principal.Project.ID),
+				attribute.String("reason", string(reason)),
+			))
+			switch reason {
+			case rpc.IngestLimitConcurrency:
+				return nil, apperr.Err(connect.CodeResourceExhausted, apperr.ReasonIngestConcurrencyLimited, "ingest concurrency limit exceeded")
+			case rpc.IngestLimitRate:
+				return nil, apperr.Err(connect.CodeResourceExhausted, apperr.ReasonIngestRateLimited, "ingest rate limit exceeded")
+			case rpc.IngestLimitNone:
+				return nil, apperr.Err(connect.CodeInternal, apperr.ReasonInternal, "invalid ingest limiter state")
+			default:
+				return nil, apperr.Err(connect.CodeResourceExhausted, apperr.ReasonIngestRateLimited, "ingest rate limit exceeded")
+			}
+		}
+		defer release()
 	}
 
 	events := req.Msg.GetEvents()

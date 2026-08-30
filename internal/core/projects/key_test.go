@@ -16,8 +16,8 @@ func TestNewPrivateKey(t *testing.T) {
 	if !strings.HasPrefix(key, "prv_") {
 		t.Errorf("private key %q does not start with prv_", key)
 	}
-	if len(key) != 24 {
-		t.Errorf("private key length = %d, want 24", len(key))
+	if len(key) != 36 {
+		t.Errorf("private key length = %d, want 36", len(key))
 	}
 	hex := key[4:]
 	if !hexPattern.MatchString(hex) {
@@ -33,8 +33,8 @@ func TestNewPublicKey(t *testing.T) {
 	if !strings.HasPrefix(key, "pub_") {
 		t.Errorf("public key %q does not start with pub_", key)
 	}
-	if len(key) != 24 {
-		t.Errorf("public key length = %d, want 24", len(key))
+	if len(key) != 36 {
+		t.Errorf("public key length = %d, want 36", len(key))
 	}
 	hex := key[4:]
 	if !hexPattern.MatchString(hex) {

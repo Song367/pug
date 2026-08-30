@@ -29,18 +29,18 @@ func randomHex(n int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// newPrivateKey generates a 24-char private API key: "prv_" + 20 hex chars (80 bits of entropy).
+// newPrivateKey generates a 36-char private API key: "prv_" + 32 hex chars (128 bits of entropy).
 func newPrivateKey() (string, error) {
-	h, err := randomHex(10)
+	h, err := randomHex(16)
 	if err != nil {
 		return "", err
 	}
 	return "prv_" + h, nil
 }
 
-// newPublicKey generates a 24-char public API key: "pub_" + 20 hex chars (80 bits of entropy).
+// newPublicKey generates a 36-char public API key: "pub_" + 32 hex chars (128 bits of entropy).
 func newPublicKey() (string, error) {
-	h, err := randomHex(10)
+	h, err := randomHex(16)
 	if err != nil {
 		return "", err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -37,7 +38,7 @@ func Run(ctx context.Context) error {
 
 func (n *initializer) run(ctx context.Context) error {
 	slog.InfoContext(ctx, "Starting NATS initialization",
-		slog.String("nats_url", n.client.GetConfig().NATSUrl),
+		slog.String("nats_url", redactedNATSURL(n.client.GetConfig().NATSUrl)),
 		slog.String("cluster", n.client.ClusterName()),
 		slog.Int("stream_replicas", n.client.GetConfig().StreamReplicas))
 
@@ -64,6 +65,21 @@ func (n *initializer) run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func redactedNATSURL(raw string) string {
+	endpoints := strings.Split(raw, ",")
+	redacted := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		u, err := url.Parse(strings.TrimSpace(endpoint))
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return "<redacted>"
+		}
+		// Log enough to identify the target without retaining userinfo, tokens,
+		// query values, paths, or fragments supplied in a connection string.
+		redacted = append(redacted, u.Scheme+"://"+u.Host)
+	}
+	return strings.Join(redacted, ",")
 }
 
 // checkReplicaSupport runs before any stream is touched. A standalone server

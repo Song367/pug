@@ -223,7 +223,8 @@ func start(ctx context.Context, d *deps) error {
 	}
 	eventsPath, eventsHandler := eventsv1connect.NewEventsServiceHandler(
 		eventsrpc.NewServer(d.nats.GetJetStream(), geoProvider, uaParser,
-			cookieless.New(d.redis.Unwrap())), handlerOpts)
+			cookieless.New(d.redis.Unwrap()),
+			eventsrpc.WithIngestGuard(d.ingestGuard, d.trustProxyHeaders)), handlerOpts)
 
 	mux := http.NewServeMux()
 
@@ -306,7 +307,7 @@ func start(ctx context.Context, d *deps) error {
 	// headers; WithRequestLimits bounds the body's size and time separately.
 	server := &http.Server{
 		Addr:              ":" + d.port,
-		Handler:           pogrpc.WithCorrelationID(pogrpc.WithRequestLimits(mux)),
+		Handler:           pogrpc.WithCorrelationID(pogrpc.WithProxyHeaderPolicy(d.trustProxyHeaders, pogrpc.WithRequestLimits(mux))),
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 	if err := http2.ConfigureServer(server, &http2.Server{}); err != nil {

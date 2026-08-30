@@ -374,8 +374,11 @@ var seedCmd = &cobra.Command{
 		count, _ := cmd.Flags().GetInt64("count")
 		batchSize, _ := cmd.Flags().GetInt("batch")
 		noReset, _ := cmd.Flags().GetBool("no-reset")
+		confirmed, _ := cmd.Flags().GetBool("confirm-disposable")
 
-		if err := seed.Run(ctx, seed.Options{Count: count, BatchSize: batchSize, NoReset: noReset}); err != nil {
+		if err := seed.Run(ctx, seed.Options{
+			Count: count, BatchSize: batchSize, NoReset: noReset, Confirmed: confirmed,
+		}); err != nil {
 			slog.ErrorContext(ctx, "seed error", slogx.Error(err))
 			os.Exit(1)
 		}
@@ -402,6 +405,7 @@ func init() {
 	seedCmd.Flags().Int64P("count", "c", 500_000, "total number of events to generate")
 	seedCmd.Flags().IntP("batch", "b", 10_000, "number of events per ClickHouse batch")
 	seedCmd.Flags().Bool("no-reset", false, "skip migrate down/up; truncate the demo tables and re-seed instead")
+	seedCmd.Flags().Bool("confirm-disposable", false, "confirm this command may destroy data in the disposable development environment")
 	rootCmd.AddCommand(seedCmd)
 
 	emailPreviewCmd.Flags().BoolVar(&emailPreviewText, "text", false, "render the plaintext twin instead of HTML")

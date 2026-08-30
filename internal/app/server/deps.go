@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"connectrpc.com/otelconnect"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pogrpc "github.com/pug-sh/pug/internal/app/server/rpc"
 	"github.com/pug-sh/pug/internal/core/authz"
 	chdb "github.com/pug-sh/pug/internal/deps/clickhouse"
 	"github.com/pug-sh/pug/internal/deps/nats"
@@ -21,18 +23,20 @@ import (
 )
 
 type deps struct {
-	authz           *authz.Authorizer
-	ch              *chdb.Conn
-	closeOtel       func(context.Context) error
-	corsOrigins     []string
-	jwtKey          []byte
-	nats            *nats.NATSClient
-	otelInterceptor *otelconnect.Interceptor
-	pgRo            *pgxpool.Pool
-	pgW             *pgxpool.Pool
-	redis           *redis.Client
-	port            string
-	demoEnabled     bool
+	authz             *authz.Authorizer
+	ch                *chdb.Conn
+	closeOtel         func(context.Context) error
+	corsOrigins       []string
+	jwtKey            []byte
+	nats              *nats.NATSClient
+	otelInterceptor   *otelconnect.Interceptor
+	pgRo              *pgxpool.Pool
+	pgW               *pgxpool.Pool
+	redis             *redis.Client
+	ingestGuard       *pogrpc.IngestGuard
+	port              string
+	demoEnabled       bool
+	trustProxyHeaders bool
 
 	// readyFailures counts consecutive failed readiness probes. It distinguishes
 	// a transient blip (logged at WARN) from a sustained outage (escalated to
@@ -78,6 +82,27 @@ func newDeps(ctx context.Context) (*deps, error) {
 		}
 	}()
 
+	var serverCfg config
+	if err := envconfig.Process(ctx, &serverCfg); err != nil {
+		return nil, err
+	}
+	if err := serverCfg.validate(); err != nil {
+		return nil, fmt.Errorf("validate server security configuration: %w", err)
+	}
+	ingestGuard, err := pogrpc.NewIngestGuard(pogrpc.IngestGuardConfig{
+		ProjectRate:        serverCfg.IngestProjectRate,
+		ProjectBurst:       serverCfg.IngestProjectBurst,
+		IPRate:             serverCfg.IngestIPRate,
+		IPBurst:            serverCfg.IngestIPBurst,
+		ProjectConcurrency: serverCfg.IngestProjectConcurrency,
+		IPConcurrency:      serverCfg.IngestIPConcurrency,
+		IdleTTL:            10 * time.Minute,
+		MaxTrackedKeys:     20_000,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize ingest guard: %w", err)
+	}
+
 	otelInterceptor, closeOtel, err := telemetry.NewOtelInterceptor(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to initialize telemetry", slogx.Error(err)) // puglint:exempt — nothing to record it on yet
@@ -90,11 +115,6 @@ func newDeps(ctx context.Context) (*deps, error) {
 			slog.ErrorContext(rollbackCtx, "failed to close otel during rollback", slogx.Error(err)) // puglint:exempt — nothing left to record it on
 		}
 	})
-
-	var serverCfg config
-	if err := envconfig.Process(ctx, &serverCfg); err != nil {
-		return nil, err
-	}
 
 	var pgCfg postgres.Config
 	if err := envconfig.Process(ctx, &pgCfg); err != nil {
@@ -159,17 +179,19 @@ func newDeps(ctx context.Context) (*deps, error) {
 
 	success = true
 	return &deps{
-		authz:           authorizer,
-		ch:              chConn,
-		closeOtel:       closeOtel,
-		corsOrigins:     strings.Split(serverCfg.CORSOrigins, ","),
-		jwtKey:          []byte(serverCfg.JWTKey),
-		nats:            natsClient,
-		otelInterceptor: otelInterceptor,
-		pgRo:            pgRo,
-		pgW:             pgW,
-		redis:           redisClient,
-		port:            serverCfg.Port,
-		demoEnabled:     serverCfg.DemoEnabled,
+		authz:             authorizer,
+		ch:                chConn,
+		closeOtel:         closeOtel,
+		corsOrigins:       strings.Split(serverCfg.CORSOrigins, ","),
+		jwtKey:            []byte(serverCfg.JWTKey),
+		nats:              natsClient,
+		otelInterceptor:   otelInterceptor,
+		pgRo:              pgRo,
+		pgW:               pgW,
+		redis:             redisClient,
+		ingestGuard:       ingestGuard,
+		port:              serverCfg.Port,
+		demoEnabled:       serverCfg.DemoEnabled,
+		trustProxyHeaders: serverCfg.TrustProxyHeaders,
 	}, nil
 }

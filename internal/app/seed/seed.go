@@ -6,8 +6,10 @@ package seed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	migrateclickhouse "github.com/pug-sh/pug/internal/app/migrate/clickhouse"
 	migratepostgres "github.com/pug-sh/pug/internal/app/migrate/postgres"
@@ -24,6 +26,12 @@ type Options struct {
 	Count     int64 // total number of events to generate
 	BatchSize int   // events per ClickHouse insert batch
 	NoReset   bool  // skip migrate down/up; clear the demo tables and re-seed instead
+	Confirmed bool  // operator explicitly acknowledged this destructive disposable-only command
+}
+
+type guardConfig struct {
+	Environment string `env:"PUG_ENVIRONMENT,default=development"`
+	Disposable  bool   `env:"PUG_DISPOSABLE_ENVIRONMENT,default=false"`
 }
 
 // Run resets the stores (unless NoReset) and seeds the demo project. By default
@@ -32,6 +40,14 @@ type Options struct {
 // before re-seeding (so a re-seed never pairs fresh events with a stale profile
 // set).
 func Run(ctx context.Context, opts Options) error {
+	var cfg guardConfig
+	if err := envconfig.Process(ctx, &cfg); err != nil {
+		return fmt.Errorf("load seed guard configuration: %w", err)
+	}
+	if err := validateGuard(cfg, opts.Confirmed); err != nil {
+		return err
+	}
+
 	// Clear the existing demo rows only on the NoReset path: the reset path drops
 	// and recreates the schema, so it already starts empty. That condition is
 	// exactly opts.NoReset, so bind it directly rather than defaulting and flipping.
@@ -42,6 +58,20 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 	return seedDemoData(ctx, opts.Count, opts.BatchSize, clearDemoRows)
+}
+
+func validateGuard(cfg guardConfig, confirmed bool) error {
+	environment := strings.ToLower(strings.TrimSpace(cfg.Environment))
+	if environment != "development" {
+		return fmt.Errorf("pug seed is disabled when PUG_ENVIRONMENT=%q; only development is allowed", environment)
+	}
+	if !cfg.Disposable {
+		return errors.New("pug seed requires PUG_DISPOSABLE_ENVIRONMENT=true")
+	}
+	if !confirmed {
+		return errors.New("pug seed requires the explicit --confirm-disposable flag")
+	}
+	return nil
 }
 
 // resetStores rolls Postgres and ClickHouse migrations all the way down then

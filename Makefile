@@ -88,6 +88,10 @@ build:
 	go build -o bin/pug-migrate-nats ./cmd/migrate/nats
 	go build -o bin/pug-migrate-postgres ./cmd/migrate/postgres
 	go build -o bin/pug-server ./cmd/server
+	go build -o bin/pug-ingress ./cmd/ingress
+	go build -o bin/pug-session-gateway ./cmd/session-gateway
+	go build -o bin/pug-bootstrap ./cmd/bootstrap
+	go build -o bin/pug-healthcheck ./cmd/healthcheck
 	go build -o bin/pug-worker-demo ./cmd/workers/demo
 	go build -o bin/pug-worker-email ./cmd/workers/email
 	go build -o bin/pug-worker-events ./cmd/workers/events

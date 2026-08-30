@@ -107,6 +107,12 @@ Google and generic OIDC sign-in are documented in
 [`docs/authentication.md`](docs/authentication.md), with a ready-to-copy
 [`config.example.json`](config.example.json).
 
+For the hardened, production-style local validation stack — including the
+collector allowlist, synthetic operator bootstrap, same-origin Dashboard
+Session Gateway, generated local TLS, and repeatable security verifier — follow
+[`infra/secure/README.md`](infra/secure/README.md). It is local-only and is not
+a remote Test or Production deployment manifest.
+
 ### Demo data
 
 `./bin/pug seed` fills a "Pug & Pals" demo project with ~4 months of history, so

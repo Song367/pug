@@ -167,14 +167,26 @@ func CreateOrgWithDefaultsInTx(
 	w *dbwrite.Queries,
 	customerID, displayName, reportingTimezone string,
 ) (dbwrite.Org, error) {
+	org, _, err := CreateOrgWithProjectInTx(ctx, w, customerID, displayName, "default", reportingTimezone)
+	return org, err
+}
+
+// CreateOrgWithProjectInTx is the configurable form used by one-time operator
+// bootstrap. Ordinary signup keeps calling CreateOrgWithDefaultsInTx, which
+// preserves its fixed "default" project name.
+func CreateOrgWithProjectInTx(
+	ctx context.Context,
+	w *dbwrite.Queries,
+	customerID, orgDisplayName, projectDisplayName, reportingTimezone string,
+) (dbwrite.Org, dbwrite.Project, error) {
 	org, err := w.CreateOrg(ctx, dbwrite.CreateOrgParams{
 		ID:          xid.New().String(),
-		DisplayName: displayName,
+		DisplayName: orgDisplayName,
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to create org", slogx.Error(err))
 		telemetry.RecordError(ctx, err)
-		return dbwrite.Org{}, err
+		return dbwrite.Org{}, dbwrite.Project{}, err
 	}
 
 	if _, err := w.CreateOrgMember(ctx, dbwrite.CreateOrgMemberParams{
@@ -184,14 +196,15 @@ func CreateOrgWithDefaultsInTx(
 	}); err != nil {
 		slog.ErrorContext(ctx, "failed to add customer as admin", slogx.Error(err))
 		telemetry.RecordError(ctx, err)
-		return dbwrite.Org{}, err
+		return dbwrite.Org{}, dbwrite.Project{}, err
 	}
 
-	if _, err := projects.CreateProjectInTx(ctx, w, org.ID, "default", reportingTimezone); err != nil {
+	project, err := projects.CreateProjectInTx(ctx, w, org.ID, projectDisplayName, reportingTimezone)
+	if err != nil {
 		// projects.CreateProjectInTx logs + records at source.
-		return dbwrite.Org{}, err
+		return dbwrite.Org{}, dbwrite.Project{}, err
 	}
-	return org, nil
+	return org, project, nil
 }
 
 // CreateOrgWithDefaults opens its own transaction around CreateOrgWithDefaultsInTx.

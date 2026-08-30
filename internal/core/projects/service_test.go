@@ -87,8 +87,8 @@ func TestProjectsService(t *testing.T) {
 			t.Errorf("starter key kind = %q, want %q", got, projects.KindPublic)
 		}
 		// A public key is stored whole, so the token is the key an SDK sends.
-		if !strings.HasPrefix(keys[0].Token, "pub_") || len(keys[0].Token) != 24 {
-			t.Errorf("starter key token = %q, want a 24-char pub_ key", keys[0].Token)
+		if !strings.HasPrefix(keys[0].Token, "pub_") || len(keys[0].Token) != 36 {
+			t.Errorf("starter key token = %q, want a 36-char pub_ key", keys[0].Token)
 		}
 	})
 

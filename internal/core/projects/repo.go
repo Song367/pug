@@ -45,7 +45,7 @@ const (
 
 // apiKeyGenCacheKey names a token's generation counter. Keyed by token, like the
 // cached rows it guards: a private token is a 64-char digest and a public one a
-// 24-char pub_ value, so the two kinds share this namespace without colliding.
+// public-key value, so the two kinds share this namespace without colliding.
 func apiKeyGenCacheKey(token string) string {
 	return apiKeyGenCachePrefix + token
 }

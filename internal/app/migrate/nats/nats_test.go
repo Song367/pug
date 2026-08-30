@@ -40,6 +40,24 @@ func TestCheckReplicaSupport(t *testing.T) {
 	}
 }
 
+func TestRedactedNATSURLNeverReturnsCredentials(t *testing.T) {
+	got := redactedNATSURL("nats://operator:super-secret@nats-a:4222,nats://token@nats-b:4222/path?credential=also-secret")
+	if got != "nats://nats-a:4222,nats://nats-b:4222" {
+		t.Fatalf("redactedNATSURL() = %q", got)
+	}
+	for _, secret := range []string{"operator", "super-secret", "token", "also-secret", "credential"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("redacted URL contains secret component %q: %q", secret, got)
+		}
+	}
+}
+
+func TestRedactedNATSURLFailsClosed(t *testing.T) {
+	if got := redactedNATSURL("not a valid endpoint"); got != "<redacted>" {
+		t.Fatalf("redactedNATSURL() = %q, want fail-closed marker", got)
+	}
+}
+
 const probeStreamName = "migrate-replica-probe"
 
 // TestReplicaGuardAgainstStandalone drives the real Run against the package's

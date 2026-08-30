@@ -50,8 +50,8 @@ func TestCreateApiKey(t *testing.T) {
 			t.Fatalf("CreateApiKey: %v", err)
 		}
 
-		if !strings.HasPrefix(created.RawKey, "prv_") || len(created.RawKey) != 24 {
-			t.Errorf("RawKey = %q, want a 24-char prv_ key", created.RawKey)
+		if !strings.HasPrefix(created.RawKey, "prv_") || len(created.RawKey) != 36 {
+			t.Errorf("RawKey = %q, want a 36-char prv_ key", created.RawKey)
 		}
 		if created.Key.DisplayName != "CI" {
 			t.Errorf("DisplayName = %q, want %q", created.Key.DisplayName, "CI")
@@ -63,7 +63,7 @@ func TestCreateApiKey(t *testing.T) {
 		if created.Key.Token != sha256Hex(created.RawKey) {
 			t.Errorf("Token = %q, want the key's sha256 hex", created.Key.Token)
 		}
-		if want := created.RawKey[:4] + "..." + created.RawKey[20:]; created.Key.Masked != want {
+		if want := created.RawKey[:4] + "..." + created.RawKey[len(created.RawKey)-4:]; created.Key.Masked != want {
 			t.Errorf("Masked = %q, want %q", created.Key.Masked, want)
 		}
 	})
@@ -74,8 +74,8 @@ func TestCreateApiKey(t *testing.T) {
 			t.Fatalf("CreateApiKey: %v", err)
 		}
 
-		if !strings.HasPrefix(created.RawKey, "pub_") || len(created.RawKey) != 24 {
-			t.Errorf("RawKey = %q, want a 24-char pub_ key", created.RawKey)
+		if !strings.HasPrefix(created.RawKey, "pub_") || len(created.RawKey) != 36 {
+			t.Errorf("RawKey = %q, want a 36-char pub_ key", created.RawKey)
 		}
 		if created.Key.Token != created.RawKey {
 			t.Errorf("Token = %q, want the key itself %q", created.Key.Token, created.RawKey)

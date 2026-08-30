@@ -576,6 +576,65 @@ func TestBatchCreate_DuplicateEventID(t *testing.T) {
 	}
 }
 
+func testIngestGuard(t *testing.T, burst, concurrency int) *rpc.IngestGuard {
+	t.Helper()
+	guard, err := rpc.NewIngestGuard(rpc.IngestGuardConfig{
+		ProjectRate:        1,
+		ProjectBurst:       burst,
+		IPRate:             1,
+		IPBurst:            burst,
+		ProjectConcurrency: concurrency,
+		IPConcurrency:      concurrency,
+		IdleTTL:            time.Minute,
+		MaxTrackedKeys:     10,
+	})
+	if err != nil {
+		t.Fatalf("NewIngestGuard: %v", err)
+	}
+	return guard
+}
+
+func TestBatchCreateDistinguishesIngestLimitReasons(t *testing.T) {
+	t.Run("rate", func(t *testing.T) {
+		guard := testIngestGuard(t, 1, 2)
+		s := NewServer(nil, stubProvider{}, nil, nil, WithIngestGuard(guard, false))
+		req := connect.NewRequest(&eventsv1.BatchCreateRequest{})
+		ctx := ctxWithProject(context.Background())
+
+		if _, err := s.BatchCreate(ctx, req); err != nil {
+			t.Fatalf("first BatchCreate: %v", err)
+		}
+		_, err := s.BatchCreate(ctx, req)
+		assertIngestLimitError(t, err, apperr.ReasonIngestRateLimited)
+	})
+
+	t.Run("concurrency", func(t *testing.T) {
+		guard := testIngestGuard(t, 2, 1)
+		req := connect.NewRequest(&eventsv1.BatchCreateRequest{})
+		clientKey := rpc.IngestClientKey(req.Header(), req.Peer().Addr, false)
+		release, reason := guard.Acquire("test-project", clientKey)
+		if reason != rpc.IngestLimitNone {
+			t.Fatalf("reserve guard: %s", reason)
+		}
+		defer release()
+
+		s := NewServer(nil, stubProvider{}, nil, nil, WithIngestGuard(guard, false))
+		_, err := s.BatchCreate(ctxWithProject(context.Background()), req)
+		assertIngestLimitError(t, err, apperr.ReasonIngestConcurrencyLimited)
+	})
+}
+
+func assertIngestLimitError(t *testing.T, err error, want apperr.Reason) {
+	t.Helper()
+	var appErr *apperr.Error
+	if !errors.As(err, &appErr) {
+		t.Fatalf("want *apperr.Error, got %T: %v", err, err)
+	}
+	if appErr.Code() != connect.CodeResourceExhausted || appErr.Reason() != want {
+		t.Fatalf("limit error = (%s, %s), want (%s, %s)", appErr.Code(), appErr.Reason(), connect.CodeResourceExhausted, want)
+	}
+}
+
 // TestEnrichBotAndVerified_TypedSlots pins the oneof contract that the regular
 // string-comparison tests cannot catch: $bot_score must land in IntValue (not
 // StringValue), $verified_bot in BoolValue. A regression that returned the

@@ -66,10 +66,10 @@ const (
 
 	magicLinkTTL = 15 * time.Minute
 
-	// accessTokenTTL is the lifetime of the session JWT. It is deliberately NOT
-	// tuned as a theft bound: the dashboard keeps both tokens in the same
-	// localStorage, so whoever can steal the JWT also holds the refresh token
-	// below. What it really bounds is how long an already-exfiltrated JWT
+	// accessTokenTTL is the lifetime of the session JWT. Hardened dashboard
+	// deployments keep both tokens behind the same-origin session gateway, while
+	// direct API clients may still hold the pair themselves. The TTL bounds how
+	// long an already-exfiltrated JWT
 	// outlives SignOut, since WithJWTAuth verifies the signature without
 	// consulting the refresh family. Role changes and member removal take effect
 	// at any TTL — authorization resolves per-request from org_members, never

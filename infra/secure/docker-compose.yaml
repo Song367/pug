@@ -1,0 +1,452 @@
+# Local production-style security validation for Local Phase L1.
+#
+# This is intentionally independent from infra/dev/docker-compose.yaml. Run it
+# only with the generated, Git-ignored env file documented in README.md.
+
+x-pug-runtime: &pug-runtime
+  user: "${PUG_L1_HOST_UID:?run generate-local-materials.sh}:${PUG_L1_HOST_GID:?run generate-local-materials.sh}"
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+  networks:
+    - data
+
+x-pug-environment: &pug-environment
+  PUG_ENVIRONMENT: test
+  PUG_DEMO_ENABLED: "false"
+  PUG_DISPOSABLE_ENVIRONMENT: "false"
+  OTEL_SERVICE_NAME: pug-l1
+
+x-data-service: &data-service
+  restart: unless-stopped
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - data
+
+services:
+  postgres:
+    <<: *data-service
+    image: postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+    environment:
+      POSTGRES_DB: "${PUG_L1_POSTGRES_DB:?missing PUG_L1_POSTGRES_DB}"
+      POSTGRES_USER: "${PUG_L1_POSTGRES_USER:?missing PUG_L1_POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${PUG_L1_POSTGRES_PASSWORD:?missing PUG_L1_POSTGRES_PASSWORD}"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+      - /var/run/postgresql:rw,nosuid,nodev,size=8m,mode=3775
+    shm_size: 256mb
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -q -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  nats:
+    <<: *data-service
+    image: nats@sha256:ad7a43eb7e3337c3c38ce5d784d1461791f95f730f252d2b25eee699752a0ca3
+    command:
+      - --jetstream
+      - --store_dir=/data
+      - --http_port=8222
+      - --user=${PUG_L1_NATS_USER:?missing PUG_L1_NATS_USER}
+      - --pass=${PUG_L1_NATS_PASSWORD:?missing PUG_L1_NATS_PASSWORD}
+    volumes:
+      - nats-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.75
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  clickhouse:
+    <<: *data-service
+    image: clickhouse/clickhouse-server@sha256:84d05b9c205e8de9d8e471fc8fbb3aaf0c07a8bec1bd57ac3a4a4ac2399abe38
+    environment:
+      CLICKHOUSE_DB: "${PUG_L1_CLICKHOUSE_DB:?missing PUG_L1_CLICKHOUSE_DB}"
+      CLICKHOUSE_USER: "${PUG_L1_CLICKHOUSE_USER:?missing PUG_L1_CLICKHOUSE_USER}"
+      CLICKHOUSE_PASSWORD: "${PUG_L1_CLICKHOUSE_PASSWORD:?missing PUG_L1_CLICKHOUSE_PASSWORD}"
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      - /var/run/clickhouse-server:rw,nosuid,nodev,size=8m,mode=0755
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    # ClickHouse 26.5 reserves a 512-thread global background pool during
+    # startup; a limit of exactly 512 leaves no room for its main/I/O threads.
+    pids_limit: 1024
+    mem_limit: 4g
+    cpus: 1.5
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+
+  dragonfly:
+    <<: *data-service
+    image: docker.dragonflydb.io/dragonflydb/dragonfly@sha256:baf70ba7ad182a992b988497cfa31a488978c8fab7712079784c2401f447e402
+    # The image already wraps Dragonfly in tini. A second Compose init would
+    # make the inner tini cease to be PID 1 and emit a subreaper warning.
+    init: false
+    command:
+      - dragonfly
+      - --logtostderr
+      - --bind=0.0.0.0
+      - --requirepass=${PUG_L1_DRAGONFLY_PASSWORD:?missing PUG_L1_DRAGONFLY_PASSWORD}
+      - --dbfilename=
+      - --snapshot_cron=
+      - --replicaof=
+      - --version_check=false
+      - --primary_port_http_enabled=false
+      - --expose_http_api=false
+      - --admin_port=0
+      - --maxmemory=512MiB
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777
+      - /data:rw,noexec,nosuid,nodev,size=8m,mode=0700
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 0.75
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli --no-auth-warning -a "$${PUG_DRAGONFLY_HEALTH_PASSWORD}" ping | grep -qx PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    environment:
+      # Do not use DFLY_PASSWORD here. Dragonfly interprets every DFLY_* name as
+      # a server flag, and v1.38.1 aborts because no `password` flag exists.
+      PUG_DRAGONFLY_HEALTH_PASSWORD: "${PUG_L1_DRAGONFLY_PASSWORD:?missing PUG_L1_DRAGONFLY_PASSWORD}"
+
+  migrate-postgres:
+    <<: *pug-runtime
+    image: pug-l1/migrate-postgres:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: migrate
+      args:
+        CMD: migrate/postgres
+    restart: "no"
+    environment:
+      <<: *pug-environment
+      DATABASE_URL: "postgres://${PUG_L1_POSTGRES_USER:?missing PUG_L1_POSTGRES_USER}:${PUG_L1_POSTGRES_PASSWORD:?missing PUG_L1_POSTGRES_PASSWORD}@postgres:5432/${PUG_L1_POSTGRES_DB:?missing PUG_L1_POSTGRES_DB}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate-clickhouse:
+    <<: *pug-runtime
+    image: pug-l1/migrate-clickhouse:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: migrate
+      args:
+        CMD: migrate/clickhouse
+    restart: "no"
+    environment:
+      <<: *pug-environment
+      CLICKHOUSE_URL: "clickhouse://${PUG_L1_CLICKHOUSE_USER:?missing PUG_L1_CLICKHOUSE_USER}:${PUG_L1_CLICKHOUSE_PASSWORD:?missing PUG_L1_CLICKHOUSE_PASSWORD}@clickhouse:9000/${PUG_L1_CLICKHOUSE_DB:?missing PUG_L1_CLICKHOUSE_DB}"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  migrate-nats:
+    <<: *pug-runtime
+    image: pug-l1/migrate-nats:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: migrate
+      args:
+        CMD: migrate/nats
+    restart: "no"
+    environment:
+      <<: *pug-environment
+      NATS_URL: "nats://${PUG_L1_NATS_USER:?missing PUG_L1_NATS_USER}:${PUG_L1_NATS_PASSWORD:?missing PUG_L1_NATS_PASSWORD}@nats:4222"
+      NATS_STREAM_REPLICAS: "1"
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  server:
+    <<: *pug-runtime
+    image: pug-l1/server:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: app
+      args:
+        CMD: server
+    restart: unless-stopped
+    environment:
+      <<: *pug-environment
+      DATABASE_URL: "postgres://${PUG_L1_POSTGRES_USER:?missing PUG_L1_POSTGRES_USER}:${PUG_L1_POSTGRES_PASSWORD:?missing PUG_L1_POSTGRES_PASSWORD}@postgres:5432/${PUG_L1_POSTGRES_DB:?missing PUG_L1_POSTGRES_DB}?sslmode=disable"
+      CLICKHOUSE_URL: "clickhouse://${PUG_L1_CLICKHOUSE_USER:?missing PUG_L1_CLICKHOUSE_USER}:${PUG_L1_CLICKHOUSE_PASSWORD:?missing PUG_L1_CLICKHOUSE_PASSWORD}@clickhouse:9000/${PUG_L1_CLICKHOUSE_DB:?missing PUG_L1_CLICKHOUSE_DB}"
+      NATS_URL: "nats://${PUG_L1_NATS_USER:?missing PUG_L1_NATS_USER}:${PUG_L1_NATS_PASSWORD:?missing PUG_L1_NATS_PASSWORD}@nats:4222"
+      REDIS_URL: "redis://:${PUG_L1_DRAGONFLY_PASSWORD:?missing PUG_L1_DRAGONFLY_PASSWORD}@dragonfly:6379"
+      PUG_SERVER_PORT: "3000"
+      PUG_JWT_SECRET_KEY: "${PUG_L1_JWT_SECRET:?missing PUG_L1_JWT_SECRET}"
+      PUG_CORS_ORIGINS: "https://localhost:${PUG_L1_DASHBOARD_HTTPS_PORT:-15443}"
+      PUG_TRUST_PROXY_HEADERS: "true"
+      PUG_INGEST_PROJECT_RATE: "200"
+      PUG_INGEST_PROJECT_BURST: "400"
+      PUG_INGEST_IP_RATE: "50"
+      PUG_INGEST_IP_BURST: "100"
+      PUG_INGEST_PROJECT_CONCURRENCY: "32"
+      PUG_INGEST_IP_CONCURRENCY: "8"
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "/app/healthcheck", "-url", "http://127.0.0.1:3000/readyz", "-timeout", "3s"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      migrate-postgres:
+        condition: service_completed_successfully
+      migrate-clickhouse:
+        condition: service_completed_successfully
+      migrate-nats:
+        condition: service_completed_successfully
+      dragonfly:
+        condition: service_healthy
+
+  worker-events:
+    <<: *pug-runtime
+    image: pug-l1/worker-events:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: worker
+      args:
+        CMD: workers/events
+    restart: unless-stopped
+    environment:
+      <<: *pug-environment
+      CLICKHOUSE_URL: "clickhouse://${PUG_L1_CLICKHOUSE_USER:?missing PUG_L1_CLICKHOUSE_USER}:${PUG_L1_CLICKHOUSE_PASSWORD:?missing PUG_L1_CLICKHOUSE_PASSWORD}@clickhouse:9000/${PUG_L1_CLICKHOUSE_DB:?missing PUG_L1_CLICKHOUSE_DB}"
+      NATS_URL: "nats://${PUG_L1_NATS_USER:?missing PUG_L1_NATS_USER}:${PUG_L1_NATS_PASSWORD:?missing PUG_L1_NATS_PASSWORD}@nats:4222"
+      PUG_WORKER_HEALTH_ADDR: ":8090"
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "/app/healthcheck", "-url", "http://127.0.0.1:8090/readyz", "-timeout", "3s"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      migrate-clickhouse:
+        condition: service_completed_successfully
+      migrate-nats:
+        condition: service_completed_successfully
+
+  ingress:
+    <<: *pug-runtime
+    image: pug-l1/ingress:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: app
+      args:
+        CMD: ingress
+    restart: unless-stopped
+    environment:
+      <<: *pug-environment
+      PUG_INGRESS_HTTP_ADDR: ":8080"
+      PUG_INGRESS_HTTPS_ADDR: ":8443"
+      PUG_INGRESS_PUBLIC_HOST: "localhost:${PUG_L1_COLLECTOR_HTTPS_PORT:-18443}"
+      PUG_INGRESS_UPSTREAM_URL: "http://server:3000"
+      PUG_INGRESS_TLS_CERT_FILE: "/run/pug-tls/localhost.crt"
+      PUG_INGRESS_TLS_KEY_FILE: "/run/pug-tls/localhost.key"
+      PUG_INGRESS_TRUST_EDGE_HEADERS: "false"
+      PUG_INGRESS_KEY_RATE: "200"
+      PUG_INGRESS_KEY_BURST: "400"
+      PUG_INGRESS_IP_RATE: "50"
+      PUG_INGRESS_IP_BURST: "100"
+      PUG_INGRESS_KEY_CONCURRENCY: "32"
+      PUG_INGRESS_IP_CONCURRENCY: "8"
+    volumes:
+      - ./.local/tls:/run/pug-tls:ro
+    ports:
+      - "127.0.0.1:${PUG_L1_COLLECTOR_HTTP_PORT:-18081}:8080"
+      - "127.0.0.1:${PUG_L1_COLLECTOR_HTTPS_PORT:-18443}:8443"
+    networks:
+      - edge
+      - data
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test:
+        - CMD
+        - /app/healthcheck
+        - -url
+        - https://localhost:8443/healthz
+        - -ca-cert
+        - /run/pug-tls/localhost.crt
+        - -timeout
+        - 3s
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      server:
+        condition: service_healthy
+
+  dashboard:
+    image: pug-l1/dashboard:local
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    user: "101:101"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    networks:
+      - ui
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+
+  session-gateway:
+    <<: *pug-runtime
+    image: pug-l1/session-gateway:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: app
+      args:
+        CMD: session-gateway
+    restart: unless-stopped
+    env_file:
+      - ./.local/session-gateway.env
+    environment:
+      <<: *pug-environment
+      REDIS_URL: "redis://:${PUG_L1_DRAGONFLY_PASSWORD:?missing PUG_L1_DRAGONFLY_PASSWORD}@dragonfly:6379"
+      PUG_SESSION_GATEWAY_ADDR: ":8443"
+      PUG_SESSION_GATEWAY_PUBLIC_ORIGIN: "https://localhost:${PUG_L1_DASHBOARD_HTTPS_PORT:-15443}"
+      PUG_SESSION_GATEWAY_API_UPSTREAM_URL: "http://server:3000"
+      PUG_SESSION_GATEWAY_STATIC_UPSTREAM_URL: "http://dashboard:8080"
+      PUG_SESSION_GATEWAY_TLS_CERT_FILE: "/run/pug-tls/localhost.crt"
+      PUG_SESSION_GATEWAY_TLS_KEY_FILE: "/run/pug-tls/localhost.key"
+    volumes:
+      - ./.local/tls:/run/pug-tls:ro
+    ports:
+      - "127.0.0.1:${PUG_L1_DASHBOARD_HTTPS_PORT:-15443}:8443"
+    networks:
+      - dashboard-edge
+      - ui
+      - data
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test:
+        - CMD
+        - /app/healthcheck
+        - -url
+        - https://localhost:8443/readyz
+        - -ca-cert
+        - /run/pug-tls/localhost.crt
+        - -timeout
+        - 3s
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      server:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+      dashboard:
+        condition: service_healthy
+
+  bootstrap:
+    <<: *pug-runtime
+    profiles:
+      - bootstrap
+    image: pug-l1/bootstrap:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: app
+      args:
+        CMD: bootstrap
+    restart: "no"
+    command:
+      - --confirm-environment=test
+      - --confirm-empty-database
+      - --credentials-out=/run/pug-bootstrap/operator.json
+    environment:
+      <<: *pug-environment
+      DATABASE_URL: "postgres://${PUG_L1_POSTGRES_USER:?missing PUG_L1_POSTGRES_USER}:${PUG_L1_POSTGRES_PASSWORD:?missing PUG_L1_POSTGRES_PASSWORD}@postgres:5432/${PUG_L1_POSTGRES_DB:?missing PUG_L1_POSTGRES_DB}?sslmode=disable"
+      PUG_BOOTSTRAP_EMAIL: "${PUG_L1_BOOTSTRAP_EMAIL:?missing PUG_L1_BOOTSTRAP_EMAIL}"
+      PUG_BOOTSTRAP_DISPLAY_NAME: "${PUG_L1_BOOTSTRAP_DISPLAY_NAME:?missing PUG_L1_BOOTSTRAP_DISPLAY_NAME}"
+      PUG_BOOTSTRAP_ORG_NAME: "${PUG_L1_BOOTSTRAP_ORG_NAME:?missing PUG_L1_BOOTSTRAP_ORG_NAME}"
+      PUG_BOOTSTRAP_PROJECT_NAME: "${PUG_L1_BOOTSTRAP_PROJECT_NAME:?missing PUG_L1_BOOTSTRAP_PROJECT_NAME}"
+      PUG_BOOTSTRAP_REPORTING_TIMEZONE: "Asia/Shanghai"
+    volumes:
+      - ./.local/bootstrap:/run/pug-bootstrap
+    depends_on:
+      migrate-postgres:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  nats-data:
+  clickhouse-data:
+  clickhouse-logs:
+
+networks:
+  edge:
+    driver: bridge
+  dashboard-edge:
+    driver: bridge
+  ui:
+    driver: bridge
+    internal: true
+  data:
+    driver: bridge
+    internal: true

@@ -1,0 +1,108 @@
+name: Supply-chain security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  filesystem:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # v0.36.0 installs the post-incident safe Trivy v0.70.0 through a
+      # SHA-pinned setup-trivy action. Do not replace this with `latest`.
+      - name: Scan source, dependencies, configuration, and secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          format: json
+          output: trivy-filesystem.json
+          exit-code: 1
+
+      - name: Upload filesystem scan evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: trivy-filesystem
+          path: trivy-filesystem.json
+          if-no-files-found: error
+          retention-days: 30
+
+  image:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: server,        cmd: server,         target: app }
+          - { name: ingress,       cmd: ingress,        target: app }
+          - { name: session-gateway, cmd: session-gateway, target: app }
+          - { name: bootstrap,     cmd: bootstrap,      target: app }
+          - { name: worker-events, cmd: workers/events, target: worker }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Build local scan image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          build-args: CMD=${{ matrix.cmd }}
+          load: true
+          push: false
+          tags: local/pug-${{ matrix.name }}:security-scan
+
+      - name: Scan runtime image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          image-ref: local/pug-${{ matrix.name }}:security-scan
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          format: json
+          output: trivy-image-${{ matrix.name }}.json
+          exit-code: 1
+
+      - name: Generate CycloneDX SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          skip-setup-trivy: true
+          image-ref: local/pug-${{ matrix.name }}:security-scan
+          format: cyclonedx
+          output: pug-${{ matrix.name }}.cdx.json
+          exit-code: 0
+
+      - name: Upload image scan and SBOM evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: supply-chain-${{ matrix.name }}
+          path: |
+            trivy-image-${{ matrix.name }}.json
+            pug-${{ matrix.name }}.cdx.json
+          if-no-files-found: error
+          retention-days: 30
