@@ -28,7 +28,15 @@ WORKDIR /src
 
 # Module download as its own cached layer (only re-runs when go.mod/go.sum change).
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    set -eu; \
+    for attempt in 1 2 3 4; do \
+      if GOPROXY=https://proxy.golang.org,direct go mod download; then \
+        exit 0; \
+      fi; \
+      sleep "$((attempt * 5))"; \
+    done; \
+    GOPROXY=direct go mod download
 
 COPY . .
 
