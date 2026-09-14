@@ -42,6 +42,26 @@ func TestIngestGuardRateAndRefill(t *testing.T) {
 	}
 }
 
+func TestIngestGuardChargesEveryEventInBatch(t *testing.T) {
+	g := newTestIngestGuard(t, IngestGuardConfig{
+		ProjectRate: 10, ProjectBurst: 10, IPRate: 10, IPBurst: 10,
+		ProjectConcurrency: 2, IPConcurrency: 2, IdleTTL: time.Minute, MaxTrackedKeys: 10,
+	})
+	if release, reason := g.AcquireN("project-a", "client-a", 8); reason != IngestLimitNone {
+		t.Fatalf("first batch reason = %q", reason)
+	} else {
+		release()
+	}
+	if _, reason := g.AcquireN("project-a", "client-a", 3); reason != IngestLimitRate {
+		t.Fatalf("batch above remaining event quota reason = %q, want rate", reason)
+	}
+	if release, reason := g.AcquireN("project-a", "client-a", 2); reason != IngestLimitNone {
+		t.Fatalf("rejected batch consumed tokens, reason = %q", reason)
+	} else {
+		release()
+	}
+}
+
 func TestIngestGuardConcurrencyAndIdempotentRelease(t *testing.T) {
 	g := newTestIngestGuard(t, IngestGuardConfig{
 		ProjectRate: 10, ProjectBurst: 10, IPRate: 10, IPBurst: 10,

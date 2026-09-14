@@ -213,10 +213,12 @@ func (s *Server) BatchCreate(
 	if err != nil {
 		return nil, err
 	}
+	events := req.Msg.GetEvents()
 	if s.ingestGuard != nil {
-		release, reason := s.ingestGuard.Acquire(
+		release, reason := s.ingestGuard.AcquireN(
 			principal.Project.ID,
 			rpc.IngestClientKey(req.Header(), req.Peer().Addr, s.trustProxyHeaders),
+			len(events),
 		)
 		if reason != rpc.IngestLimitNone {
 			ingestRejectedCounter.Add(ctx, 1, metric.WithAttributes(
@@ -237,7 +239,6 @@ func (s *Server) BatchCreate(
 		defer release()
 	}
 
-	events := req.Msg.GetEvents()
 	if len(events) == 0 {
 		slog.DebugContext(ctx, "received empty event batch",
 			slog.String("project_id", principal.Project.ID))
