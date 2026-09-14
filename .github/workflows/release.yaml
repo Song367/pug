@@ -112,7 +112,8 @@ jobs:
             "${IMAGE}@${DIGEST}"
           provenance="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .Provenance}}')"
           jq -e --arg revision "${GITHUB_SHA}" '
-            ([.. | strings] | index("https://slsa.dev/provenance/v0.2") != null) and
+            type == "object" and length > 0 and
+            all(.[]; (.SLSA | type == "object")) and
             ([.. | strings] | index($revision) != null)
           ' <<<"${provenance}" >/dev/null
           sbom="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .SBOM}}')"
