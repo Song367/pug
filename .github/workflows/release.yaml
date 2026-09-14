@@ -80,7 +80,8 @@ jobs:
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
-          context: .
+          # Keep the action's immutable Git context so BuildKit provenance
+          # contains the signed repository and commit material.
           target: ${{ matrix.target }}
           build-args: |
             CMD=${{ matrix.cmd }}
@@ -111,10 +112,48 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${IMAGE}@${DIGEST}"
           provenance="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .Provenance}}')"
-          jq -e --arg revision "${GITHUB_SHA}" '
-            type == "object" and length > 0 and
-            all(.[]; (.SLSA | type == "object")) and
-            ([.. | strings] | index($revision) != null)
+          jq -e --arg revision "${GITHUB_SHA}" --arg source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" '
+            def normalize_source:
+              ascii_downcase
+              | sub("^git\\+"; "")
+              | split("#")[0]
+              | split("?")[0]
+              | sub("\\.git$"; "");
+            def has_source_uri:
+              (.uri? | type == "string") and (.uri | length) > 0;
+            def has_revision_digest:
+              (.digest? | type == "object") and
+              ([.digest.sha1?, .digest.gitCommit?]
+                | map(select(type == "string" and length > 0))
+                | length) > 0;
+            def authoritative_sources:
+              [
+                .invocation.configSource?,
+                .predicate.invocation.configSource?
+              ] | map(select(type == "object" and has_source_uri));
+            def fallback_sources:
+              [
+                .materials[]?,
+                .buildDefinition.resolvedDependencies[]?,
+                .predicate.materials[]?,
+                .predicate.buildDefinition.resolvedDependencies[]?
+              ] | map(select(type == "object" and has_source_uri and has_revision_digest));
+            def source_candidates:
+              authoritative_sources as $authoritative
+              | if ($authoritative | length) > 0 then $authoritative else fallback_sources end;
+            def binds_source($expected_source; $expected_revision):
+              source_candidates as $sources
+              | ($sources | length) > 0 and
+                all($sources[];
+                  ((.uri? // "") | type == "string") and
+                  ((.uri | normalize_source) == ($expected_source | normalize_source)) and
+                  ((.digest? // {}) | type == "object") and
+                  ([.digest.sha1?, .digest.gitCommit?]
+                    | map(select(type == "string"))
+                    | index($expected_revision) != null));
+            [.. | objects | .SLSA? | select(type == "object")] as $slsa |
+            ($slsa | length) > 0 and
+            all($slsa[]; binds_source($source; $revision))
           ' <<<"${provenance}" >/dev/null
           sbom="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .SBOM}}')"
           jq -e '[.. | objects | .SPDXID? // empty] | index("SPDXRef-DOCUMENT") != null' \
