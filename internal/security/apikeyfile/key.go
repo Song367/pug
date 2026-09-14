@@ -11,12 +11,20 @@ import (
 	"strings"
 )
 
-const maximumFileBytes = 128
+const (
+	maximumFileBytes = 256
+	maximumKeys      = 2
+)
 
 var privateKeyPattern = regexp.MustCompile(`^prv_[0-9a-f]{32}$`)
 
-// Load reads one role-specific private API key from a protected regular file.
-func Load(path string) ([]byte, error) {
+// Keyring contains the active role-specific private API key and, during a
+// bounded rotation overlap, its replacement. It never contains keys for a
+// different ingress role.
+type Keyring [][]byte
+
+// Load reads one or two role-specific private API keys from a protected file.
+func Load(path string) (Keyring, error) {
 	path = strings.TrimSpace(path)
 	if path == "" || !filepath.IsAbs(path) {
 		return nil, errors.New("API key file must be an absolute path")
@@ -45,14 +53,31 @@ func Load(path string) ([]byte, error) {
 	if err != nil || int64(len(raw)) != opened.Size() {
 		return nil, errors.New("API key file changed while it was being read")
 	}
-	key := strings.TrimSpace(string(raw))
-	if !privateKeyPattern.MatchString(key) {
-		return nil, errors.New("API key file must contain exactly one private key")
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) == 0 || len(lines) > maximumKeys {
+		return nil, errors.New("API key file must contain one or two private keys")
 	}
-	return []byte(key), nil
+	keyring := make(Keyring, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		key := strings.TrimSpace(line)
+		if !privateKeyPattern.MatchString(key) {
+			return nil, errors.New("API key file contains an invalid private key")
+		}
+		if _, exists := seen[key]; exists {
+			return nil, errors.New("API key file contains duplicate private keys")
+		}
+		seen[key] = struct{}{}
+		keyring = append(keyring, []byte(key))
+	}
+	return keyring, nil
 }
 
-// Matches performs an exact constant-time comparison with this ingress role's key.
-func Matches(expected []byte, candidate string) bool {
-	return subtle.ConstantTimeCompare(expected, []byte(candidate)) == 1
+// Matches compares against every key so the matching position is not exposed.
+func Matches(expected Keyring, candidate string) bool {
+	matched := 0
+	for _, key := range expected {
+		matched |= subtle.ConstantTimeCompare(key, []byte(candidate))
+	}
+	return matched == 1
 }

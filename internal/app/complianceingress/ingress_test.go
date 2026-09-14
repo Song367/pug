@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/pug-sh/pug/internal/gen/proto/shared/profiles/v1/profilesv1connect"
+	"github.com/pug-sh/pug/internal/security/apikeyfile"
 )
 
 const testPrivateKey = "prv_0123456789abcdef0123456789abcdef"
@@ -54,7 +55,7 @@ func makeHandler(t *testing.T, transport *captureTransport) *handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := newHandler(cfg, upstream, transport, []byte(testPrivateKey))
+	h, err := newHandler(cfg, upstream, transport, apikeyfile.Keyring{[]byte(testPrivateKey)})
 	if err != nil {
 		t.Fatal(err)
 	}

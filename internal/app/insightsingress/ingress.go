@@ -125,10 +125,10 @@ func secureServer(addr string, handler http.Handler) *http.Server {
 type handler struct {
 	proxy         *httputil.ReverseProxy
 	sourceCodeURL string
-	apiKey        []byte
+	apiKey        apikeyfile.Keyring
 }
 
-func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper, apiKey []byte) (*handler, error) {
+func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper, apiKey apikeyfile.Keyring) (*handler, error) {
 	sourceCodeURL, err := parseSourceCodeURL(cfg.SourceCodeURL)
 	if err != nil {
 		return nil, fmt.Errorf("PUG_SOURCE_CODE_URL: %w", err)
@@ -153,7 +153,15 @@ func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper, apiK
 	if len(apiKey) == 0 {
 		return nil, errors.New("Insights ingress role key is required")
 	}
-	return &handler{proxy: proxy, sourceCodeURL: sourceCodeURL.String(), apiKey: append([]byte(nil), apiKey...)}, nil
+	return &handler{proxy: proxy, sourceCodeURL: sourceCodeURL.String(), apiKey: cloneKeyring(apiKey)}, nil
+}
+
+func cloneKeyring(source apikeyfile.Keyring) apikeyfile.Keyring {
+	cloned := make(apikeyfile.Keyring, len(source))
+	for index := range source {
+		cloned[index] = append([]byte(nil), source[index]...)
+	}
+	return cloned
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

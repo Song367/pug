@@ -21,6 +21,39 @@ func TestLoadAndMatchProtectedPrivateKey(t *testing.T) {
 	}
 }
 
+func TestLoadSupportsBoundedRotationOverlap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "role.key")
+	const current = "prv_0123456789abcdef0123456789abcdef"
+	const next = "prv_abcdef0123456789abcdef0123456789"
+	if err := os.WriteFile(path, []byte(current+"\n"+next+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !Matches(loaded, current) || !Matches(loaded, next) || Matches(loaded, "prv_11111111111111111111111111111111") {
+		t.Fatal("rotation overlap did not accept exactly the two role keys")
+	}
+}
+
+func TestLoadRejectsTooManyOrDuplicateKeys(t *testing.T) {
+	for name, content := range map[string]string{
+		"duplicate": "prv_0123456789abcdef0123456789abcdef\nprv_0123456789abcdef0123456789abcdef\n",
+		"too-many":  "prv_0123456789abcdef0123456789abcdef\nprv_abcdef0123456789abcdef0123456789\nprv_11111111111111111111111111111111\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "role.key")
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("unsafe API key overlap was accepted")
+			}
+		})
+	}
+}
+
 func TestLoadRejectsUnsafeFiles(t *testing.T) {
 	dir := t.TempDir()
 	worldReadable := filepath.Join(dir, "world.key")
