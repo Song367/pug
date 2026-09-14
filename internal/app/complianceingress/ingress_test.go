@@ -44,7 +44,7 @@ func (t *captureTransport) snapshot() (*http.Request, string, int) {
 }
 
 func testConfig() config {
-	return config{Environment: "test", HTTPSAddr: ":8443", PublicHost: "insights-test.example", UpstreamURL: "http://pug-server:3000", TLSCertFile: "/run/tls/tls.crt", TLSKeyFile: "/run/tls/tls.key", SourceCodeURL: "https://github.com/Song367/pug/tree/t7"}
+	return config{Environment: "test", HTTPSAddr: ":8443", PublicHost: "insights-test.example", UpstreamURL: "http://pug-server:3000", TLSCertFile: "/run/tls/tls.crt", TLSKeyFile: "/run/tls/tls.key", APIKeyFile: "/run/secrets/compliance.key", SourceCodeURL: "https://github.com/Song367/pug/tree/t7"}
 }
 
 func makeHandler(t *testing.T, transport *captureTransport) *handler {
@@ -54,7 +54,7 @@ func makeHandler(t *testing.T, transport *captureTransport) *handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := newHandler(cfg, upstream, transport)
+	h, err := newHandler(cfg, upstream, transport, []byte(testPrivateKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +108,7 @@ func TestComplianceIngressRejectsOtherTraffic(t *testing.T) {
 		"browser":           {func(r *http.Request) { r.Header.Set("Origin", "https://testonlyf.velvetplot.com") }, http.StatusForbidden},
 		"missing key":       {func(r *http.Request) { r.Header.Del("X-Api-Key") }, http.StatusUnauthorized},
 		"public key":        {func(r *http.Request) { r.Header.Set("X-Api-Key", "pub_0123456789abcdef0123456789abcdef") }, http.StatusUnauthorized},
+		"other private key": {func(r *http.Request) { r.Header.Set("X-Api-Key", "prv_abcdef0123456789abcdef0123456789") }, http.StatusUnauthorized},
 	} {
 		t.Run(name, func(t *testing.T) {
 			capture := &captureTransport{}
@@ -149,6 +150,7 @@ func TestComplianceIngressBodyHealthTLSAndConfig(t *testing.T) {
 		"development":    func(c *config) { c.Environment = "development" },
 		"host injection": func(c *config) { c.PublicHost = "example.test/path" },
 		"credentials":    func(c *config) { c.UpstreamURL = "http://user:pass@pug:3000" },
+		"relative key":   func(c *config) { c.APIKeyFile = "compliance.key" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := testConfig()

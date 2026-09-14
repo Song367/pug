@@ -59,6 +59,7 @@ func testConfig() config {
 		UpstreamURL:   "http://pug-server:3000",
 		TLSCertFile:   "/run/tls/tls.crt",
 		TLSKeyFile:    "/run/tls/tls.key",
+		APIKeyFile:    "/run/secrets/insights.key",
 		SourceCodeURL: "https://github.com/Song367/pug/tree/test-insights-sidecar",
 	}
 }
@@ -74,7 +75,7 @@ func makeHandler(t *testing.T, transport http.RoundTripper) (*handler, *captureT
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := newHandler(cfg, upstream, transport)
+	h, err := newHandler(cfg, upstream, transport, []byte(testPrivateKey))
 	if err != nil {
 		t.Fatalf("newHandler: %v", err)
 	}
@@ -146,6 +147,10 @@ func TestInsightsIngressRejectsEverythingExceptPrivateQuery(t *testing.T) {
 			mutate: func(r *http.Request) { r.Header.Set("X-Api-Key", "pub_0123456789abcdef0123456789abcdef") },
 			want:   http.StatusUnauthorized,
 		},
+		"other role private key": {
+			mutate: func(r *http.Request) { r.Header.Set("X-Api-Key", "prv_abcdef0123456789abcdef0123456789") },
+			want:   http.StatusUnauthorized,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, capture := makeHandler(t, &captureTransport{})
@@ -200,6 +205,7 @@ func TestInsightsIngressConfigFailsClosed(t *testing.T) {
 	for name, mutate := range map[string]func(*config){
 		"environment":          func(c *config) { c.Environment = "staging" },
 		"empty listener":       func(c *config) { c.HTTPSAddr = "" },
+		"relative role key":    func(c *config) { c.APIKeyFile = "insights.key" },
 		"host injection":       func(c *config) { c.PublicHost = "example.test/path" },
 		"upstream credentials": func(c *config) { c.UpstreamURL = "http://user:pass@pug:3000" },
 		"insecure source URL":  func(c *config) { c.SourceCodeURL = "http://github.com/Song367/pug" },

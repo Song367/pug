@@ -11,18 +11,17 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"regexp"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/pug-sh/pug/internal/deps/telemetry"
 	"github.com/pug-sh/pug/internal/gen/proto/shared/insights/v1/insightsv1connect"
+	"github.com/pug-sh/pug/internal/security/apikeyfile"
 	"github.com/sethvargo/go-envconfig"
 )
 
 const maxBodyBytes = 256 << 10
-
-var privateAPIKeyPattern = regexp.MustCompile(`^prv_[0-9a-f]{32}$`)
 
 type config struct {
 	Environment   string `env:"PUG_ENVIRONMENT,required"`
@@ -31,6 +30,7 @@ type config struct {
 	UpstreamURL   string `env:"PUG_INSIGHTS_INGRESS_UPSTREAM_URL,required"`
 	TLSCertFile   string `env:"PUG_INSIGHTS_INGRESS_TLS_CERT_FILE,required"`
 	TLSKeyFile    string `env:"PUG_INSIGHTS_INGRESS_TLS_KEY_FILE,required"`
+	APIKeyFile    string `env:"PUG_INSIGHTS_INGRESS_API_KEY_FILE,required"`
 	SourceCodeURL string `env:"PUG_SOURCE_CODE_URL,required"`
 }
 
@@ -46,6 +46,9 @@ func (c *config) validate() (*url.URL, error) {
 	}
 	if strings.TrimSpace(c.TLSCertFile) == "" || strings.TrimSpace(c.TLSKeyFile) == "" {
 		return nil, errors.New("PUG_INSIGHTS_INGRESS_TLS_CERT_FILE and PUG_INSIGHTS_INGRESS_TLS_KEY_FILE are required")
+	}
+	if !filepath.IsAbs(strings.TrimSpace(c.APIKeyFile)) {
+		return nil, errors.New("PUG_INSIGHTS_INGRESS_API_KEY_FILE must be an absolute path")
 	}
 	publicURL, err := url.Parse("https://" + c.PublicHost)
 	if err != nil || publicURL.Host != c.PublicHost || publicURL.User != nil || publicURL.Path != "" || publicURL.RawQuery != "" || publicURL.Fragment != "" {
@@ -76,7 +79,11 @@ func Run(ctx context.Context) error {
 	}
 	defer telemetry.ShutdownOnExit(ctx, shutdownTelemetry)
 
-	handler, err := newHandler(cfg, upstream, nil)
+	apiKey, err := apikeyfile.Load(cfg.APIKeyFile)
+	if err != nil {
+		return fmt.Errorf("load Insights ingress role key: %w", err)
+	}
+	handler, err := newHandler(cfg, upstream, nil, apiKey)
 	if err != nil {
 		return err
 	}
@@ -118,9 +125,10 @@ func secureServer(addr string, handler http.Handler) *http.Server {
 type handler struct {
 	proxy         *httputil.ReverseProxy
 	sourceCodeURL string
+	apiKey        []byte
 }
 
-func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper) (*handler, error) {
+func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper, apiKey []byte) (*handler, error) {
 	sourceCodeURL, err := parseSourceCodeURL(cfg.SourceCodeURL)
 	if err != nil {
 		return nil, fmt.Errorf("PUG_SOURCE_CODE_URL: %w", err)
@@ -142,7 +150,10 @@ func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper) (*ha
 		},
 		Transport: transport,
 	}
-	return &handler{proxy: proxy, sourceCodeURL: sourceCodeURL.String()}, nil
+	if len(apiKey) == 0 {
+		return nil, errors.New("Insights ingress role key is required")
+	}
+	return &handler{proxy: proxy, sourceCodeURL: sourceCodeURL.String(), apiKey: append([]byte(nil), apiKey...)}, nil
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +176,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, http.StatusForbidden, "browser origin denied")
 		return
 	}
-	if !privateAPIKeyPattern.MatchString(r.Header.Get("X-Api-Key")) {
+	if !apikeyfile.Matches(h.apiKey, r.Header.Get("X-Api-Key")) {
 		writeGatewayError(w, http.StatusUnauthorized, "private API key required")
 		return
 	}
