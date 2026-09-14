@@ -136,7 +136,7 @@ func newHandler(cfg config, upstream *url.URL, transport http.RoundTripper, apiK
 		Transport: transport,
 	}
 	if len(apiKey) == 0 {
-		return nil, errors.New("Compliance ingress role key is required")
+		return nil, errors.New("compliance ingress role key is required")
 	}
 	return &handler{proxy: proxy, sourceCodeURL: sourceCodeURL.String(), apiKey: cloneKeyring(apiKey)}, nil
 }
