@@ -103,7 +103,7 @@ func applyRawEventsRetention(ctx context.Context, catalog retentionCatalog, quer
 	rollback := rawEventsRetentionRollbackDDL(before)
 	if err = catalog.Exec(ctx, query); err != nil {
 		if rollbackErr := catalog.Exec(context.WithoutCancel(ctx), rollback); rollbackErr != nil {
-			return fmt.Errorf("apply raw events retention: %w (automatic rollback failed: %v)", err, rollbackErr)
+			return fmt.Errorf("apply raw events retention: %w (automatic rollback failed: %w)", err, rollbackErr)
 		}
 		return fmt.Errorf("apply raw events retention: %w (previous TTL restored)", err)
 	}
@@ -115,7 +115,7 @@ func applyRawEventsRetention(ctx context.Context, catalog retentionCatalog, quer
 		return nil
 	}
 	if rollbackErr := catalog.Exec(context.WithoutCancel(ctx), rollback); rollbackErr != nil {
-		return fmt.Errorf("verify raw events retention: %w (automatic rollback failed: %v)", verifyErr, rollbackErr)
+		return fmt.Errorf("verify raw events retention: %w (automatic rollback failed: %w)", verifyErr, rollbackErr)
 	}
 	return fmt.Errorf("verify raw events retention: %w (previous TTL restored)", verifyErr)
 }
@@ -145,8 +145,7 @@ func verifyRawEventsRetention(query, createTable string) error {
 }
 
 func extractEventsTTL(createTable string) string {
-	lines := strings.Split(strings.ReplaceAll(createTable, "\r\n", "\n"), "\n")
-	for _, line := range lines {
+	for line := range strings.SplitSeq(strings.ReplaceAll(createTable, "\r\n", "\n"), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if len(trimmed) >= 4 && strings.EqualFold(trimmed[:4], "TTL ") {
 			return strings.TrimSpace(trimmed[4:])

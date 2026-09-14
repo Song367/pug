@@ -59,9 +59,23 @@ func Load(path string, now time.Time) (*Keyring, error) {
 	if info.Size() <= 0 || info.Size() > MaximumFileBytes {
 		return nil, errors.New("PUG_JWT_KEYRING_FILE has an invalid size")
 	}
-	raw, err := os.ReadFile(path)
+	// #nosec G304 -- the operator-supplied absolute path is validated above and
+	// the opened inode is compared with the lstat result before any data is read.
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("read PUG_JWT_KEYRING_FILE: %w", err)
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !os.SameFile(info, openedInfo) {
+		return nil, errors.New("PUG_JWT_KEYRING_FILE changed while it was being opened")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, MaximumFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read PUG_JWT_KEYRING_FILE: %w", err)
+	}
+	if int64(len(raw)) != openedInfo.Size() {
+		return nil, errors.New("PUG_JWT_KEYRING_FILE changed while it was being read")
 	}
 	return Parse(raw, now)
 }
