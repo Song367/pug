@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -55,6 +56,42 @@ func TestRedactedNATSURLNeverReturnsCredentials(t *testing.T) {
 func TestRedactedNATSURLFailsClosed(t *testing.T) {
 	if got := redactedNATSURL("not a valid endpoint"); got != "<redacted>" {
 		t.Fatalf("redactedNATSURL() = %q, want fail-closed marker", got)
+	}
+}
+
+func TestRawEventRetentionPolicyFailsClosedOutsideTest(t *testing.T) {
+	tn := testutil.SetupNATS(t)
+	dir := writeProbeSchema(t)
+	t.Setenv("NATS_URL", tn.URL)
+	t.Setenv("NATS_STREAMS_CONFIG", filepath.Join(dir, "streams.yaml"))
+	t.Setenv("NATS_CONSUMERS_CONFIG", filepath.Join(dir, "consumers.yaml"))
+	t.Setenv("PUG_ENVIRONMENT", "production")
+	t.Setenv("PUG_RAW_EVENTS_RETENTION", "336h")
+
+	err := Run(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "only") {
+		t.Fatalf("Run() error = %v, want test-only retention rejection", err)
+	}
+}
+
+func TestEffectiveMaxAgeOnlyOverridesRawEventStreams(t *testing.T) {
+	configured := 30 * 24 * time.Hour
+	raw := 14 * 24 * time.Hour
+	for _, tt := range []struct {
+		name string
+		want time.Duration
+	}{
+		{name: "events", want: raw},
+		{name: "dlq-events", want: raw},
+		{name: "profiles", want: configured},
+		{name: "compliance", want: configured},
+	} {
+		if got := effectiveMaxAge(tt.name, configured, raw, true); got != tt.want {
+			t.Errorf("effectiveMaxAge(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+	if got := effectiveMaxAge("events", configured, raw, false); got != configured {
+		t.Fatalf("unmanaged events max age = %v, want %v", got, configured)
 	}
 }
 

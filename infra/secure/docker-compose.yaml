@@ -18,6 +18,7 @@ x-pug-runtime: &pug-runtime
 
 x-pug-environment: &pug-environment
   PUG_ENVIRONMENT: test
+  PUG_RAW_EVENTS_RETENTION: "${PUG_L1_RAW_EVENTS_RETENTION:-}"
   PUG_DEMO_ENABLED: "false"
   PUG_DISPOSABLE_ENVIRONMENT: "false"
   OTEL_SERVICE_NAME: pug-l1

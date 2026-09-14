@@ -62,6 +62,12 @@ and the entire `.local` directory is ignored by Git. The Dashboard image is
 built separately because its source lives in the sibling `pug-app` repository;
 Compose uses `pull_policy: never` so it cannot silently pull an unrelated image.
 
+`PUG_L1_RAW_EVENTS_RETENTION` is optional and leaves upstream retention
+unchanged when empty. A Test deployment may set it to a whole number of days
+between `24h` and `720h` (for example `336h`). Migration jobs reject a non-empty
+value outside `PUG_ENVIRONMENT=test`; this Test-only control must not be reused
+as a Production retention policy.
+
 Create the first operator, org, project, and keys exactly once:
 
 ```bash

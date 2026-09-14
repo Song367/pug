@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 	natsdeps "github.com/pug-sh/pug/internal/deps/nats"
+	"github.com/pug-sh/pug/internal/deps/rawretention"
 )
 
 // TODO: For self-hosting, move stream/consumer initialization to app startup instead of a
@@ -100,8 +102,16 @@ func checkReplicaSupport(replicas int, clusterName string) error {
 
 func (n *initializer) createStreams(ctx context.Context, streams []natsdeps.StreamConfig) error {
 	replicas := n.client.GetConfig().StreamReplicas
+	rawRetention, manageRawRetention, err := rawretention.Resolve(
+		n.client.GetConfig().Environment,
+		n.client.GetConfig().RawEventsRetention,
+	)
+	if err != nil {
+		return err
+	}
 
 	for _, streamConfig := range streams {
+		streamConfig.MaxAge = effectiveMaxAge(streamConfig.Name, streamConfig.MaxAge, rawRetention, manageRawRetention)
 		slog.InfoContext(ctx, "Creating stream",
 			slog.String("name", streamConfig.Name),
 			slog.Any("subjects", streamConfig.Subjects),
@@ -170,6 +180,13 @@ func (n *initializer) createStreams(ctx context.Context, streams []natsdeps.Stre
 	}
 
 	return nil
+}
+
+func effectiveMaxAge(name string, configured, rawRetention time.Duration, managed bool) time.Duration {
+	if managed && (name == "events" || name == "dlq-events") {
+		return rawRetention
+	}
+	return configured
 }
 
 func (n *initializer) createConsumers(ctx context.Context, consumers []natsdeps.ConsumerConfig) error {

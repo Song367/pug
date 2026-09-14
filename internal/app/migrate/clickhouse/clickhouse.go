@@ -3,13 +3,16 @@ package clickhouse
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/pressly/goose/v3"
 	clickhousedeps "github.com/pug-sh/pug/internal/deps/clickhouse"
+	"github.com/pug-sh/pug/internal/deps/rawretention"
 	"github.com/sethvargo/go-envconfig"
 )
 
@@ -24,6 +27,9 @@ func Up(ctx context.Context, num int) error {
 		if err := goose.UpContext(ctx, db, dir); err != nil {
 			return err
 		}
+		if err := reconcileRawEventsRetention(ctx, db); err != nil {
+			return err
+		}
 		slog.InfoContext(ctx, "applied all clickhouse migrations")
 		return nil
 	}
@@ -36,9 +42,41 @@ func Up(ctx context.Context, num int) error {
 	if err := goose.UpToContext(ctx, db, dir, current+int64(num)); err != nil {
 		return err
 	}
+	if err := reconcileRawEventsRetention(ctx, db); err != nil {
+		return err
+	}
 
 	slog.InfoContext(ctx, "applied clickhouse migrations", slog.Int("applied_migrations", num))
 	return nil
+}
+
+func reconcileRawEventsRetention(ctx context.Context, db *sql.DB) error {
+	var cfg clickhousedeps.Config
+	if err := envconfig.Process(ctx, &cfg); err != nil {
+		return err
+	}
+	query, days, managed, err := rawEventsRetentionDDL(cfg.Environment, cfg.RawEventsRetention)
+	if err != nil {
+		return err
+	}
+	if !managed {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx, query); err != nil {
+		return fmt.Errorf("apply raw events retention: %w", err)
+	}
+	slog.InfoContext(ctx, "reconciled raw events retention", slog.Int64("retention_days", days))
+	return nil
+}
+
+func rawEventsRetentionDDL(environment, raw string) (string, int64, bool, error) {
+	retention, managed, err := rawretention.Resolve(environment, raw)
+	if err != nil || !managed {
+		return "", 0, managed, err
+	}
+	days := int64(retention / (24 * time.Hour))
+	return fmt.Sprintf("ALTER TABLE events MODIFY TTL occur_time + INTERVAL %d DAY DELETE", days), days, true, nil
 }
 
 func Down(ctx context.Context, num int) error {

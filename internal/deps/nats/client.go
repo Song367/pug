@@ -25,7 +25,9 @@ type Config struct {
 	// value differs per deployment — a standalone server must stay at 1 (enforced
 	// by checkReplicaSupport, not by the server), and streams.yaml is baked into
 	// the image, so it cannot vary.
-	StreamReplicas int `env:"NATS_STREAM_REPLICAS,default=1"`
+	StreamReplicas     int    `env:"NATS_STREAM_REPLICAS,default=1"`
+	Environment        string `env:"PUG_ENVIRONMENT,default=development"`
+	RawEventsRetention string `env:"PUG_RAW_EVENTS_RETENTION"`
 }
 
 type StreamConfig struct {
