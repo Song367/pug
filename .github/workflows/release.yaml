@@ -119,21 +119,25 @@ jobs:
               | split("#")[0]
               | split("?")[0]
               | sub("\\.git$"; "");
-            def is_github_source:
-              (.uri? | type == "string") and
-              ((.uri | normalize_source) | startswith("https://github.com/"));
+            def has_source_uri:
+              (.uri? | type == "string") and (.uri | length) > 0;
+            def has_revision_digest:
+              (.digest? | type == "object") and
+              ([.digest.sha1?, .digest.gitCommit?]
+                | map(select(type == "string" and length > 0))
+                | length) > 0;
             def authoritative_sources:
               [
                 .invocation.configSource?,
                 .predicate.invocation.configSource?
-              ] | map(select(type == "object" and is_github_source));
+              ] | map(select(type == "object" and has_source_uri));
             def fallback_sources:
               [
                 .materials[]?,
                 .buildDefinition.resolvedDependencies[]?,
                 .predicate.materials[]?,
                 .predicate.buildDefinition.resolvedDependencies[]?
-              ] | map(select(type == "object" and is_github_source));
+              ] | map(select(type == "object" and has_source_uri and has_revision_digest));
             def source_candidates:
               authoritative_sources as $authoritative
               | if ($authoritative | length) > 0 then $authoritative else fallback_sources end;
