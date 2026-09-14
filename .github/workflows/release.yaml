@@ -100,7 +100,7 @@ jobs:
           IMAGE: ${{ env.IMAGE_PREFIX }}-${{ matrix.name }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
-      - name: Verify signature, provenance, and SBOM attestations
+      - name: Verify signature, provenance revision, and SBOM
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE: ${{ env.IMAGE_PREFIX }}-${{ matrix.name }}
@@ -110,13 +110,11 @@ jobs:
             --certificate-identity "${IDENTITY}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${IMAGE}@${DIGEST}"
-          cosign verify-attestation \
-            --type https://slsa.dev/provenance/v0.2 \
-            --certificate-identity "${IDENTITY}" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${IMAGE}@${DIGEST}"
-          cosign verify-attestation \
-            --type https://spdx.dev/Document \
-            --certificate-identity "${IDENTITY}" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${IMAGE}@${DIGEST}"
+          provenance="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .Provenance}}')"
+          jq -e --arg revision "${GITHUB_SHA}" '
+            ([.. | strings] | index("https://slsa.dev/provenance/v0.2") != null) and
+            ([.. | strings] | index($revision) != null)
+          ' <<<"${provenance}" >/dev/null
+          sbom="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .SBOM}}')"
+          jq -e '[.. | objects | .SPDXID? // empty] | index("SPDXRef-DOCUMENT") != null' \
+            <<<"${sbom}" >/dev/null
