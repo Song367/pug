@@ -21,7 +21,7 @@ permissions:
 
 env:
   # Package-per-role on GHCR under the org: ghcr.io/pug-sh/pug-<name>.
-  IMAGE_PREFIX: ghcr.io/pug-sh/pug
+  IMAGE_PREFIX: ghcr.io/song367/pug
 
 jobs:
   image:
