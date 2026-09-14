@@ -119,18 +119,28 @@ jobs:
               | split("#")[0]
               | split("?")[0]
               | sub("\\.git$"; "");
-            def source_candidates:
+            def is_github_source:
+              (.uri? | type == "string") and
+              ((.uri | normalize_source) | startswith("https://github.com/"));
+            def authoritative_sources:
               [
                 .invocation.configSource?,
+                .predicate.invocation.configSource?
+              ] | map(select(type == "object" and is_github_source));
+            def fallback_sources:
+              [
                 .materials[]?,
                 .buildDefinition.resolvedDependencies[]?,
-                .predicate.invocation.configSource?,
                 .predicate.materials[]?,
                 .predicate.buildDefinition.resolvedDependencies[]?
-              ] | map(select(type == "object"));
+              ] | map(select(type == "object" and is_github_source));
+            def source_candidates:
+              authoritative_sources as $authoritative
+              | if ($authoritative | length) > 0 then $authoritative else fallback_sources end;
             def binds_source($expected_source; $expected_revision):
-              source_candidates
-              | any(.[];
+              source_candidates as $sources
+              | ($sources | length) > 0 and
+                all($sources[];
                   ((.uri? // "") | type == "string") and
                   ((.uri | normalize_source) == ($expected_source | normalize_source)) and
                   ((.digest? // {}) | type == "object") and
