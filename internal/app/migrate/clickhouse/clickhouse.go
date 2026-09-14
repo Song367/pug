@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
@@ -63,14 +66,120 @@ func reconcileRawEventsRetention(ctx context.Context, db *sql.DB) error {
 		return nil
 	}
 
-	if _, err := db.ExecContext(ctx, query); err != nil {
-		return fmt.Errorf("apply raw events retention: %w", err)
+	if err := applyRawEventsRetention(ctx, sqlRetentionCatalog{db: db}, query); err != nil {
+		return err
 	}
 	slog.InfoContext(ctx, "reconciled raw events retention", slog.Int64("retention_days", days))
 	return nil
 }
 
+type retentionCatalog interface {
+	ShowCreate(context.Context) (string, error)
+	Exec(context.Context, string) error
+}
+
+type sqlRetentionCatalog struct{ db *sql.DB }
+
+var retentionDaysPattern = regexp.MustCompile(`(?i)(?:INTERVAL\s+([0-9]+)\s+DAY|toIntervalDay\(([0-9]+)\))`)
+
+func (c sqlRetentionCatalog) ShowCreate(ctx context.Context) (string, error) {
+	var createTable string
+	if err := c.db.QueryRowContext(ctx, "SHOW CREATE TABLE events").Scan(&createTable); err != nil {
+		return "", err
+	}
+	return createTable, nil
+}
+
+func (c sqlRetentionCatalog) Exec(ctx context.Context, query string) error {
+	_, err := c.db.ExecContext(ctx, query)
+	return err
+}
+
+func applyRawEventsRetention(ctx context.Context, catalog retentionCatalog, query string) error {
+	before, err := catalog.ShowCreate(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot raw events table definition: %w", err)
+	}
+	rollback := rawEventsRetentionRollbackDDL(before)
+	if err = catalog.Exec(ctx, query); err != nil {
+		if rollbackErr := catalog.Exec(context.WithoutCancel(ctx), rollback); rollbackErr != nil {
+			return fmt.Errorf("apply raw events retention: %w (automatic rollback failed: %v)", err, rollbackErr)
+		}
+		return fmt.Errorf("apply raw events retention: %w (previous TTL restored)", err)
+	}
+	after, verifyErr := catalog.ShowCreate(ctx)
+	if verifyErr == nil {
+		verifyErr = verifyRawEventsRetention(query, after)
+	}
+	if verifyErr == nil {
+		return nil
+	}
+	if rollbackErr := catalog.Exec(context.WithoutCancel(ctx), rollback); rollbackErr != nil {
+		return fmt.Errorf("verify raw events retention: %w (automatic rollback failed: %v)", verifyErr, rollbackErr)
+	}
+	return fmt.Errorf("verify raw events retention: %w (previous TTL restored)", verifyErr)
+}
+
+func rawEventsRetentionRollbackDDL(createTable string) string {
+	if ttl := extractEventsTTL(createTable); ttl != "" {
+		return "ALTER TABLE events MODIFY TTL " + ttl
+	}
+	return "ALTER TABLE events REMOVE TTL"
+}
+
+func verifyRawEventsRetention(query, createTable string) error {
+	wanted := strings.TrimSpace(strings.TrimPrefix(query, "ALTER TABLE events MODIFY TTL"))
+	got := extractEventsTTL(createTable)
+	if query == "ALTER TABLE events REMOVE TTL" {
+		if got != "" {
+			return fmt.Errorf("events TTL still present: %q", got)
+		}
+		return nil
+	}
+	wantedDays, wantedOK := retentionExpressionDays(wanted)
+	gotDays, gotOK := retentionExpressionDays(got)
+	if !wantedOK || !gotOK || wantedDays != gotDays {
+		return fmt.Errorf("events TTL = %q, want %q", got, wanted)
+	}
+	return nil
+}
+
+func extractEventsTTL(createTable string) string {
+	lines := strings.Split(strings.ReplaceAll(createTable, "\r\n", "\n"), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) >= 4 && strings.EqualFold(trimmed[:4], "TTL ") {
+			return strings.TrimSpace(trimmed[4:])
+		}
+	}
+	return ""
+}
+
+func normalizeRetentionExpression(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func retentionExpressionDays(value string) (int64, bool) {
+	match := retentionDaysPattern.FindStringSubmatch(normalizeRetentionExpression(value))
+	if len(match) != 3 {
+		return 0, false
+	}
+	raw := match[1]
+	if raw == "" {
+		raw = match[2]
+	}
+	days, err := strconv.ParseInt(raw, 10, 64)
+	return days, err == nil && days >= 1 && days <= 14
+}
+
 func rawEventsRetentionDDL(environment, raw string) (string, int64, bool, error) {
+	// An empty value in Test is an explicit rollback request. Leaving it as a
+	// no-op would keep a previously installed TTL active even though the
+	// deployment configuration says retention is unmanaged. Production keeps
+	// the upstream no-op behavior and cannot use this Test-only control.
+	if strings.EqualFold(strings.TrimSpace(environment), "test") && strings.TrimSpace(raw) == "" {
+		return "ALTER TABLE events REMOVE TTL", 0, true, nil
+	}
 	retention, managed, err := rawretention.Resolve(environment, raw)
 	if err != nil || !managed {
 		return "", 0, managed, err

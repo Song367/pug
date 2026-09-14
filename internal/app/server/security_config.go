@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,8 +28,21 @@ func (c *config) validate() error {
 		return fmt.Errorf("PUG_ENVIRONMENT must be development, test, or production, got %q", c.Environment)
 	}
 
-	if err := validateJWTKey(c.JWTKey); err != nil {
-		return err
+	c.JWTKeyringFile = strings.TrimSpace(c.JWTKeyringFile)
+	if strings.TrimSpace(c.JWTKey) != "" && c.JWTKeyringFile != "" {
+		return errors.New("PUG_JWT_SECRET_KEY and PUG_JWT_KEYRING_FILE are mutually exclusive")
+	}
+	if c.JWTKeyringFile != "" {
+		if !filepath.IsAbs(c.JWTKeyringFile) {
+			return errors.New("PUG_JWT_KEYRING_FILE must be an absolute path")
+		}
+	} else {
+		if c.Environment != "development" {
+			return errors.New("PUG_JWT_KEYRING_FILE is required outside development")
+		}
+		if err := validateJWTKey(c.JWTKey); err != nil {
+			return err
+		}
 	}
 
 	origins, err := parseCORSOrigins(c.CORSOrigins)

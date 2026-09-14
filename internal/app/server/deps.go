@@ -18,6 +18,7 @@ import (
 	"github.com/pug-sh/pug/internal/deps/postgres"
 	"github.com/pug-sh/pug/internal/deps/redis"
 	"github.com/pug-sh/pug/internal/deps/telemetry"
+	"github.com/pug-sh/pug/internal/security/jwtkeyring"
 	"github.com/pug-sh/pug/internal/slogx"
 	"github.com/sethvargo/go-envconfig"
 )
@@ -27,7 +28,7 @@ type deps struct {
 	ch                *chdb.Conn
 	closeOtel         func(context.Context) error
 	corsOrigins       []string
-	jwtKey            []byte
+	jwtKeys           *jwtkeyring.Keyring
 	nats              *nats.NATSClient
 	otelInterceptor   *otelconnect.Interceptor
 	pgRo              *pgxpool.Pool
@@ -88,6 +89,16 @@ func newDeps(ctx context.Context) (*deps, error) {
 	}
 	if err := serverCfg.validate(); err != nil {
 		return nil, fmt.Errorf("validate server security configuration: %w", err)
+	}
+	var jwtKeys *jwtkeyring.Keyring
+	if serverCfg.JWTKeyringFile != "" {
+		loadedJWTKeys, loadErr := jwtkeyring.Load(serverCfg.JWTKeyringFile, time.Now())
+		if loadErr != nil {
+			return nil, fmt.Errorf("load JWT keyring: %w", loadErr)
+		}
+		jwtKeys = loadedJWTKeys
+	} else {
+		jwtKeys = jwtkeyring.Single([]byte(serverCfg.JWTKey))
 	}
 	ingestGuard, err := pogrpc.NewIngestGuard(pogrpc.IngestGuardConfig{
 		ProjectRate:        serverCfg.IngestProjectRate,
@@ -183,7 +194,7 @@ func newDeps(ctx context.Context) (*deps, error) {
 		ch:                chConn,
 		closeOtel:         closeOtel,
 		corsOrigins:       strings.Split(serverCfg.CORSOrigins, ","),
-		jwtKey:            []byte(serverCfg.JWTKey),
+		jwtKeys:           jwtKeys,
 		nats:              natsClient,
 		otelInterceptor:   otelInterceptor,
 		pgRo:              pgRo,

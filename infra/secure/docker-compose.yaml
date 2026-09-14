@@ -212,6 +212,8 @@ services:
       args:
         CMD: server
     restart: unless-stopped
+    volumes:
+      - ./.local/pug-jwt-keyring.json:/run/secrets/pug-jwt-keyring.json:ro
     environment:
       <<: *pug-environment
       DATABASE_URL: "postgres://${PUG_L1_POSTGRES_USER:?missing PUG_L1_POSTGRES_USER}:${PUG_L1_POSTGRES_PASSWORD:?missing PUG_L1_POSTGRES_PASSWORD}@postgres:5432/${PUG_L1_POSTGRES_DB:?missing PUG_L1_POSTGRES_DB}?sslmode=disable"
@@ -219,7 +221,7 @@ services:
       NATS_URL: "nats://${PUG_L1_NATS_USER:?missing PUG_L1_NATS_USER}:${PUG_L1_NATS_PASSWORD:?missing PUG_L1_NATS_PASSWORD}@nats:4222"
       REDIS_URL: "redis://:${PUG_L1_DRAGONFLY_PASSWORD:?missing PUG_L1_DRAGONFLY_PASSWORD}@dragonfly:6379"
       PUG_SERVER_PORT: "3000"
-      PUG_JWT_SECRET_KEY: "${PUG_L1_JWT_SECRET:?missing PUG_L1_JWT_SECRET}"
+      PUG_JWT_KEYRING_FILE: "/run/secrets/pug-jwt-keyring.json"
       PUG_CORS_ORIGINS: "https://localhost:${PUG_L1_DASHBOARD_HTTPS_PORT:-15443}"
       PUG_TRUST_PROXY_HEADERS: "true"
       PUG_INGEST_PROJECT_RATE: "200"

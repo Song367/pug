@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const maxRetention = 30 * 24 * time.Hour
+const maxRetention = 14 * 24 * time.Hour
 
 // Resolve returns an explicitly managed raw-event retention window. An empty
 // value leaves upstream Pug defaults unchanged. Retention is deliberately
@@ -27,7 +27,7 @@ func Resolve(environment, raw string) (time.Duration, bool, error) {
 		return 0, false, fmt.Errorf("parse PUG_RAW_EVENTS_RETENTION: %w", err)
 	}
 	if retention < 24*time.Hour || retention > maxRetention || retention%(24*time.Hour) != 0 {
-		return 0, false, errors.New("PUG_RAW_EVENTS_RETENTION must be a whole number of days between 1d and 30d")
+		return 0, false, errors.New("PUG_RAW_EVENTS_RETENTION must be a whole number of days between 1d and 14d")
 	}
 	return retention, true, nil
 }

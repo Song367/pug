@@ -8,7 +8,9 @@ local_dir="$script_dir/.local"
 env_file="$local_dir/pug-l1.env"
 session_env_file="$local_dir/session-gateway.env"
 
-if [ -e "$env_file" ] || [ -e "$session_env_file" ] || [ -e "$local_dir/tls" ]; then
+keyring_file="$local_dir/pug-jwt-keyring.json"
+
+if [ -e "$env_file" ] || [ -e "$session_env_file" ] || [ -e "$keyring_file" ] || [ -e "$local_dir/tls" ]; then
   echo "refusing to overwrite existing L1 materials under $local_dir" >&2
   exit 1
 fi
@@ -27,6 +29,7 @@ nats_password=$(openssl rand -hex 32)
 clickhouse_password=$(openssl rand -hex 32)
 dragonfly_password=$(openssl rand -hex 32)
 jwt_secret=$(openssl rand -hex 48)
+jwt_secret_b64url=$(printf '%s' "$jwt_secret" | openssl base64 -A | tr '+/' '-_' | tr -d '=')
 session_encryption_key=$(openssl rand -hex 32)
 
 {
@@ -42,7 +45,6 @@ session_encryption_key=$(openssl rand -hex 32)
   echo "PUG_L1_CLICKHOUSE_USER=pug_l1"
   echo "PUG_L1_CLICKHOUSE_PASSWORD=$clickhouse_password"
   echo "PUG_L1_DRAGONFLY_PASSWORD=$dragonfly_password"
-  echo "PUG_L1_JWT_SECRET=$jwt_secret"
   echo "PUG_L1_CORS_ORIGINS=https://localhost:15443"
   echo "PUG_L1_COLLECTOR_HTTP_PORT=18081"
   echo "PUG_L1_COLLECTOR_HTTPS_PORT=18443"
@@ -60,6 +62,11 @@ chmod 0600 "$work_dir/pug-l1.env"
 } > "$work_dir/session-gateway.env"
 chmod 0600 "$work_dir/session-gateway.env"
 
+cat > "$work_dir/pug-jwt-keyring.json" <<EOF
+{"version":1,"active_kid":"local-v1","keys":{"local-v1":"$jwt_secret_b64url"}}
+EOF
+chmod 0600 "$work_dir/pug-jwt-keyring.json"
+
 openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 30 \
   -subj "/CN=localhost" \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
@@ -73,8 +80,9 @@ chmod 0644 "$work_dir/tls/localhost.crt"
 
 mv "$work_dir/pug-l1.env" "$env_file"
 mv "$work_dir/session-gateway.env" "$session_env_file"
+mv "$work_dir/pug-jwt-keyring.json" "$keyring_file"
 mv "$work_dir/bootstrap" "$local_dir/bootstrap"
 mv "$work_dir/tls" "$local_dir/tls"
 
-echo "created local L1 env, session key, TLS certificate, and protected bootstrap output directory"
+echo "created local L1 env, JWT keyring, session key, TLS certificate, and protected bootstrap output directory"
 echo "env: $env_file"

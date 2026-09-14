@@ -16,6 +16,8 @@ concurrency:
 permissions:
   contents: read
   packages: write # push images to GHCR via the built-in GITHUB_TOKEN
+  id-token: write # keyless Cosign certificate and BuildKit provenance
+  attestations: write
 
 env:
   # Package-per-role on GHCR under the org: ghcr.io/pug-sh/pug-<name>.
@@ -30,6 +32,7 @@ jobs:
         include:
           - { name: server,                  cmd: server,                   target: app }
           - { name: ingress,                 cmd: ingress,                  target: app }
+          - { name: compliance-ingress,      cmd: compliance-ingress,       target: app }
           - { name: bootstrap,               cmd: bootstrap,                target: app }
           - { name: worker-events,           cmd: workers/events,           target: worker }
           - { name: worker-email,            cmd: workers/email,            target: worker }
@@ -57,6 +60,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       - name: Derive tags and labels
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
@@ -69,6 +75,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -84,3 +91,30 @@ jobs:
           # Per-name cache scope so the fourteen parallel builds don't clobber each other.
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+      - name: Sign immutable image digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ env.IMAGE_PREFIX }}-${{ matrix.name }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Verify signature, provenance, and SBOM attestations
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ env.IMAGE_PREFIX }}-${{ matrix.name }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yaml@${{ github.ref }}
+        run: |
+          cosign verify \
+            --certificate-identity "${IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${IMAGE}@${DIGEST}"
+          cosign verify-attestation \
+            --type https://slsa.dev/provenance/v0.2 \
+            --certificate-identity "${IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${IMAGE}@${DIGEST}"
+          cosign verify-attestation \
+            --type https://spdx.dev/Document \
+            --certificate-identity "${IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${IMAGE}@${DIGEST}"

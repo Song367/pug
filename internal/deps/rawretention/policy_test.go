@@ -22,6 +22,8 @@ func TestResolve(t *testing.T) {
 		{name: "development fails closed", environment: "development", raw: "336h", wantErr: "only"},
 		{name: "fractional day rejected", environment: "test", raw: "25h", wantErr: "whole number"},
 		{name: "too short rejected", environment: "test", raw: "23h", wantErr: "whole number"},
+		{name: "fifteen days rejected", environment: "test", raw: "360h", wantErr: "whole number"},
+		{name: "thirty days rejected", environment: "test", raw: "720h", wantErr: "whole number"},
 		{name: "too long rejected", environment: "test", raw: "744h", wantErr: "whole number"},
 		{name: "invalid rejected", environment: "test", raw: "fourteen-days", wantErr: "parse"},
 	}

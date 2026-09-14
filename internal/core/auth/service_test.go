@@ -109,6 +109,9 @@ func TestAuthService(t *testing.T) {
 		if !parsed.Valid {
 			t.Fatal("JWT is not valid")
 		}
+		if got := parsed.Header["kid"]; got != "legacy" {
+			t.Fatalf("JWT kid = %v, want legacy", got)
+		}
 		// aud/iss must match what WithJWTAuth verifies, else every dashboard request 401s.
 		if !slices.Contains(claims.Audience, auth.Audience) {
 			t.Errorf("audience = %v, want to contain %q", claims.Audience, auth.Audience)
@@ -116,17 +119,14 @@ func TestAuthService(t *testing.T) {
 		if claims.Issuer != auth.Issuer {
 			t.Errorf("issuer = %q, want %q", claims.Issuer, auth.Issuer)
 		}
-		// Pin the access token's absolute lifetime. It is not a theft bound (the
-		// client holds both tokens in one localStorage), but a regression to a long
-		// TTL would turn every leaked JWT into a near-permanent credential — SignOut
-		// revokes the refresh family, never an issued JWT. The band is absolute, not
-		// a ratio to refreshTokenTTL: package auth_test can read neither constant.
+		// Pin the access token's absolute lifetime to the no-kid migration window.
+		// SignOut revokes the refresh family, never an already-issued JWT.
 		if claims.ExpiresAt == nil || claims.IssuedAt == nil {
 			t.Fatal("access token must carry both iat and exp")
 		}
 		ttl := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
-		if ttl < 23*time.Hour || ttl > 25*time.Hour {
-			t.Errorf("access token TTL = %v, want ~24h", ttl)
+		if ttl < 14*time.Minute || ttl > 16*time.Minute {
+			t.Errorf("access token TTL = %v, want ~15m", ttl)
 		}
 	})
 }
