@@ -4,6 +4,8 @@
 # compile; the runtime target selects the filesystem shape:
 #   --build-arg CMD=server                 --target app      -> pug-server
 #   --build-arg CMD=ingress                --target app      -> pug-ingress
+#   --build-arg CMD=insights-ingress       --target app      -> pug-insights-ingress
+#   --build-arg CMD=compliance-ingress     --target app      -> pug-compliance-ingress
 #   --build-arg CMD=session-gateway        --target app      -> pug-session-gateway
 #   --build-arg CMD=bootstrap              --target app      -> pug-bootstrap
 #   --build-arg CMD=workers/events         --target worker   -> pug-worker-events

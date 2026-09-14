@@ -3,7 +3,8 @@ package server
 type config struct {
 	Port                     string `env:"PUG_SERVER_PORT,default=3000"`
 	Environment              string `env:"PUG_ENVIRONMENT,default=development"`
-	JWTKey                   string `env:"PUG_JWT_SECRET_KEY,required"`
+	JWTKey                   string `env:"PUG_JWT_SECRET_KEY"`
+	JWTKeyringFile           string `env:"PUG_JWT_KEYRING_FILE"`
 	CORSOrigins              string `env:"PUG_CORS_ORIGINS,default=*"`
 	TrustProxyHeaders        bool   `env:"PUG_TRUST_PROXY_HEADERS,default=false"`
 	IngestProjectRate        int    `env:"PUG_INGEST_PROJECT_RATE,default=200"`

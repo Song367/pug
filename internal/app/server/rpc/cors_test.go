@@ -51,7 +51,7 @@ func TestWithSDKCORSRejectsUnknownBrowserHeader(t *testing.T) {
 
 func assertHeaderToken(t *testing.T, raw, want string) {
 	t.Helper()
-	for _, value := range strings.Split(raw, ",") {
+	for value := range strings.SplitSeq(raw, ",") {
 		if strings.EqualFold(strings.TrimSpace(value), want) {
 			return
 		}

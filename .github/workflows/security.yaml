@@ -2,7 +2,6 @@ name: Supply-chain security
 
 on:
   pull_request:
-    branches: [main, security/phase0]
   push:
     branches: [main, security/phase0]
   workflow_dispatch:
@@ -52,11 +51,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: server,        cmd: server,         target: app }
-          - { name: ingress,       cmd: ingress,        target: app }
-          - { name: session-gateway, cmd: session-gateway, target: app }
-          - { name: bootstrap,     cmd: bootstrap,      target: app }
-          - { name: worker-events, cmd: workers/events, target: worker }
+          # Keep this matrix identical to release.yaml. Every release role is
+          # built and scanned on PRs, but this workflow has no package/id-token
+          # permission and never pushes or signs an image.
+          - { name: server,                  cmd: server,                   target: app }
+          - { name: ingress,                 cmd: ingress,                  target: app }
+          - { name: insights-ingress,        cmd: insights-ingress,         target: app }
+          - { name: compliance-ingress,      cmd: compliance-ingress,       target: app }
+          - { name: session-gateway,         cmd: session-gateway,          target: app }
+          - { name: bootstrap,               cmd: bootstrap,                target: app }
+          - { name: worker-events,           cmd: workers/events,           target: worker }
+          - { name: worker-email,            cmd: workers/email,            target: worker }
+          - { name: worker-profile-identify, cmd: workers/profile/identify, target: worker }
+          - { name: worker-profile-alias,    cmd: workers/profile/alias,    target: worker }
+          - { name: worker-profile-upsert,   cmd: workers/profile/upsert,   target: worker }
+          - { name: worker-compliance,       cmd: workers/compliance,       target: worker }
+          - { name: worker-demo,             cmd: workers/demo,             target: worker }
+          - { name: cron-usage,              cmd: cron/usage,               target: app }
+          - { name: migrate-postgres,        cmd: migrate/postgres,         target: migrate }
+          - { name: migrate-clickhouse,      cmd: migrate/clickhouse,       target: migrate }
+          - { name: migrate-nats,            cmd: migrate/nats,             target: migrate }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

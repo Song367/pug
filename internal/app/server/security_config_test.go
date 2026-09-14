@@ -8,7 +8,7 @@ import (
 func secureTestConfig() config {
 	return config{
 		Environment:              "test",
-		JWTKey:                   "e8deabf4e0c241d9bb723c871cb3ad6fe4487867a2b313edb3ae47f89b51d09c",
+		JWTKeyringFile:           "/run/secrets/pug-jwt-keyring.json",
 		CORSOrigins:              "https://analytics.example.test",
 		IngestProjectRate:        200,
 		IngestProjectBurst:       400,
@@ -34,6 +34,8 @@ func TestConfigValidateRejectsWeakJWTKeys(t *testing.T) {
 	} {
 		t.Run(key, func(t *testing.T) {
 			cfg := secureTestConfig()
+			cfg.Environment = "development"
+			cfg.JWTKeyringFile = ""
 			cfg.JWTKey = key
 			if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "PUG_JWT_SECRET_KEY") {
 				t.Fatalf("validate error = %v, want JWT rejection", err)
@@ -67,6 +69,23 @@ func TestConfigValidateAllowsDevelopmentWildcardAndDemo(t *testing.T) {
 	cfg.DemoEnabled = true
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("validate: %v", err)
+	}
+}
+
+func TestConfigValidateRequiresKeyringOutsideDevelopment(t *testing.T) {
+	cfg := secureTestConfig()
+	cfg.JWTKeyringFile = ""
+	cfg.JWTKey = "e8deabf4e0c241d9bb723c871cb3ad6fe4487867a2b313edb3ae47f89b51d09c"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "PUG_JWT_KEYRING_FILE") {
+		t.Fatalf("validate error = %v, want keyring requirement", err)
+	}
+}
+
+func TestConfigValidateRejectsBothJWTConfigurationModes(t *testing.T) {
+	cfg := secureTestConfig()
+	cfg.JWTKey = "e8deabf4e0c241d9bb723c871cb3ad6fe4487867a2b313edb3ae47f89b51d09c"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("validate error = %v, want mutually exclusive rejection", err)
 	}
 }
 

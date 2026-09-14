@@ -16,6 +16,7 @@ import (
 	coreoauth "github.com/pug-sh/pug/internal/core/auth/oauth"
 	natsdeps "github.com/pug-sh/pug/internal/deps/nats"
 	authv1 "github.com/pug-sh/pug/internal/gen/proto/public/auth/v1"
+	"github.com/pug-sh/pug/internal/security/jwtkeyring"
 	"github.com/pug-sh/pug/internal/slogx"
 	"google.golang.org/protobuf/proto"
 )
@@ -39,13 +40,17 @@ type server struct {
 }
 
 func NewServer(ctx context.Context, pgRO *pgxpool.Pool, pgW *pgxpool.Pool, jwtKey []byte, publisher *natsdeps.NATSClient, demoEnabled bool) (*server, error) {
+	return NewServerWithKeyring(ctx, pgRO, pgW, jwtkeyring.Single(jwtKey), publisher, demoEnabled)
+}
+
+func NewServerWithKeyring(ctx context.Context, pgRO *pgxpool.Pool, pgW *pgxpool.Pool, jwtKeys *jwtkeyring.Keyring, publisher *natsdeps.NATSClient, demoEnabled bool) (*server, error) {
 	oauthCfg, err := coreoauth.LoadConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load oauth config: %w", err)
 	}
 	logExternalProviders(ctx, oauthCfg)
 
-	service, err := coreauth.NewService(ctx, pgRO, pgW, jwtKey, publisher, oauthCfg, demoEnabled)
+	service, err := coreauth.NewServiceWithKeyring(ctx, pgRO, pgW, jwtKeys, publisher, oauthCfg, demoEnabled)
 	if err != nil {
 		return nil, err
 	}

@@ -21,6 +21,7 @@ import (
 	emailworkerv1 "github.com/pug-sh/pug/internal/gen/proto/workers/email/v1"
 	"github.com/pug-sh/pug/internal/gen/repo/dbread"
 	"github.com/pug-sh/pug/internal/gen/repo/dbwrite"
+	"github.com/pug-sh/pug/internal/security/jwtkeyring"
 	"github.com/pug-sh/pug/internal/slogx"
 	"github.com/rs/xid"
 	"go.opentelemetry.io/otel"
@@ -75,13 +76,10 @@ const (
 	// at any TTL — authorization resolves per-request from org_members, never
 	// from a claim.
 	//
-	// The number is therefore set by refresh cost, not leak risk. Every refresh
-	// is a FOR UPDATE-locked tx that inserts a row (see createRefreshToken's
-	// pruning TODO) and rotates the token within its family, and racing rotations
-	// are what trip reuse-detection. 24h puts that at ~once per active user per
-	// day. Keep it far below refreshTokenTTL — nothing enforces that ratio;
-	// service_test.go pins this constant's absolute value at ~24h.
-	accessTokenTTL = 24 * time.Hour
+	// T7 pins this to the legacy no-kid compatibility window. Refresh remains a
+	// FOR UPDATE-locked rotation, while a compromised bearer and a retired JWT
+	// key stop authorizing requests within fifteen minutes.
+	accessTokenTTL = 15 * time.Minute
 	// refreshTokenTTL is the sliding lifetime of a refresh token. Every refresh
 	// issues a fresh one, so a user active at least once per window stays signed
 	// in indefinitely; one fully idle for the whole window must sign in again.
@@ -104,7 +102,7 @@ type Service struct {
 	read      *dbread.Queries
 	write     *dbwrite.Queries
 	pgW       *pgxpool.Pool
-	jwtKey    []byte
+	jwtKeys   *jwtkeyring.Keyring
 	publisher JobPublisher
 	oauth     *coreoauth.Service
 	// demoEnabled gates DemoSignIn, the credential-less viewer login. It mirrors
@@ -114,6 +112,13 @@ type Service struct {
 }
 
 func NewService(ctx context.Context, pgRO *pgxpool.Pool, pgW *pgxpool.Pool, jwtKey []byte, publisher JobPublisher, oauthCfg coreoauth.Config, demoEnabled bool) (*Service, error) {
+	return NewServiceWithKeyring(ctx, pgRO, pgW, jwtkeyring.Single(jwtKey), publisher, oauthCfg, demoEnabled)
+}
+
+func NewServiceWithKeyring(ctx context.Context, pgRO *pgxpool.Pool, pgW *pgxpool.Pool, jwtKeys *jwtkeyring.Keyring, publisher JobPublisher, oauthCfg coreoauth.Config, demoEnabled bool) (*Service, error) {
+	if _, _, err := jwtKeys.Active(); err != nil {
+		return nil, err
+	}
 	registry, err := coreoauth.NewRegistryFromConfig(oauthCfg, coreoauth.DefaultHTTPClient())
 	if err != nil {
 		return nil, err
@@ -124,7 +129,7 @@ func NewService(ctx context.Context, pgRO *pgxpool.Pool, pgW *pgxpool.Pool, jwtK
 		read:        dbread.New(pgRO),
 		write:       dbwrite.New(pgW),
 		pgW:         pgW,
-		jwtKey:      jwtKey,
+		jwtKeys:     jwtKeys,
 		publisher:   publisher,
 		oauth:       oauthSvc,
 		demoEnabled: demoEnabled,
@@ -487,8 +492,13 @@ func (s *Service) generateJWT(id string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, standardClaims)
+	keyID, key, err := s.jwtKeys.Active()
+	if err != nil {
+		return "", err
+	}
+	token.Header["kid"] = keyID
 
-	tokenString, err := token.SignedString(s.jwtKey)
+	tokenString, err := token.SignedString(key)
 	if err != nil {
 		return "", err
 	}

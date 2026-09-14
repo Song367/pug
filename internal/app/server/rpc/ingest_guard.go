@@ -62,6 +62,16 @@ func NewIngestGuard(cfg IngestGuardConfig) (*IngestGuard, error) {
 // Acquire reserves one request against both project and client limits. A
 // successful call returns an idempotent release function.
 func (g *IngestGuard) Acquire(projectID, clientKey string) (func(), IngestLimitReason) {
+	return g.AcquireN(projectID, clientKey, 1)
+}
+
+// AcquireN reserves eventCount tokens against both project and client limits.
+// This makes configured rates event quotas rather than request quotas, so a
+// client cannot bypass the project ceiling by filling 100-event batches.
+func (g *IngestGuard) AcquireN(projectID, clientKey string, eventCount int) (func(), IngestLimitReason) {
+	if eventCount < 1 {
+		eventCount = 1
+	}
 	now := g.now()
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -76,12 +86,13 @@ func (g *IngestGuard) Acquire(projectID, clientKey string) (func(), IngestLimitR
 	if project.active >= g.cfg.ProjectConcurrency || client.active >= g.cfg.IPConcurrency {
 		return nil, IngestLimitConcurrency
 	}
-	if project.tokens < 1 || client.tokens < 1 {
+	cost := float64(eventCount)
+	if project.tokens < cost || client.tokens < cost {
 		return nil, IngestLimitRate
 	}
 
-	project.tokens--
-	client.tokens--
+	project.tokens -= cost
+	client.tokens -= cost
 	project.active++
 	client.active++
 

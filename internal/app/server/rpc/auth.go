@@ -16,6 +16,7 @@ import (
 	coreauth "github.com/pug-sh/pug/internal/core/auth"
 	"github.com/pug-sh/pug/internal/deps/telemetry"
 	"github.com/pug-sh/pug/internal/gen/repo/dbread"
+	"github.com/pug-sh/pug/internal/security/jwtkeyring"
 	"github.com/pug-sh/pug/internal/slogx"
 )
 
@@ -203,6 +204,10 @@ func WithSDKAuth(repo projectKeyLookup) authn.AuthFunc {
 // Optionally accepts x-project-id header to populate Project; verifies the
 // customer is a member of the project's org via GetProjectByIDAndOrgMember.
 func WithJWTAuth(jwtKey []byte, queries *dbread.Queries) authn.AuthFunc {
+	return WithJWTKeyring(jwtkeyring.Single(jwtKey), queries)
+}
+
+func WithJWTKeyring(jwtKeys *jwtkeyring.Keyring, queries *dbread.Queries) authn.AuthFunc {
 	return func(ctx context.Context, req *http.Request) (any, error) {
 		authHeader := req.Header.Get("Authorization")
 		if authHeader == "" {
@@ -218,12 +223,7 @@ func WithJWTAuth(jwtKey []byte, queries *dbread.Queries) authn.AuthFunc {
 			return nil, unauthenticated(ctx, "Bearer token is empty")
 		}
 
-		parsedJWT, err := jwt.Parse(token, func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, authn.Errorf("unexpected signing method: %v", t.Header["alg"])
-			}
-			return jwtKey, nil
-		},
+		parsedJWT, err := jwt.Parse(token, jwtKeys.VerificationKey,
 			// Defense in depth: pin the algorithm (the keyfunc already rejects
 			// non-HMAC, but WithValidMethods stops a forged header before the
 			// keyfunc runs) and require the aud/iss/exp our issuer sets, so a
@@ -299,7 +299,11 @@ func WithJWTAuth(jwtKey []byte, queries *dbread.Queries) authn.AuthFunc {
 // WithDualAuth authenticates via private API key if x-api-key header is present; otherwise falls back to JWT.
 // Unlike WithSDKAuth, this only accepts private keys (not public) and falls back to JWT, populating Customer.
 func WithDualAuth(jwtKey []byte, queries *dbread.Queries, repo projectKeyLookup) authn.AuthFunc {
-	jwtAuth := WithJWTAuth(jwtKey, queries)
+	return WithDualAuthKeyring(jwtkeyring.Single(jwtKey), queries, repo)
+}
+
+func WithDualAuthKeyring(jwtKeys *jwtkeyring.Keyring, queries *dbread.Queries, repo projectKeyLookup) authn.AuthFunc {
+	jwtAuth := WithJWTKeyring(jwtKeys, queries)
 
 	return func(ctx context.Context, req *http.Request) (any, error) {
 		if apiKey := req.Header.Get(HeaderAPIKey); apiKey != "" {

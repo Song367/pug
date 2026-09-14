@@ -120,14 +120,14 @@ func start(ctx context.Context, d *deps) error {
 	// - Dashboard: JWT auth only (for dashboard-only services)
 	// - SDK: API key auth (public or private, no JWT fallback) for SDK-only services
 	// - Shared: Dual auth - private API key or JWT fallback (for services accessible from both)
-	dashboardMW := authn.NewMiddleware(pogrpc.WithJWTAuth(d.jwtKey, queriesRo))
+	dashboardMW := authn.NewMiddleware(pogrpc.WithJWTKeyring(d.jwtKeys, queriesRo))
 	sdkMW := authn.NewMiddleware(pogrpc.WithSDKAuth(projectsRepo))
-	sharedMW := authn.NewMiddleware(pogrpc.WithDualAuth(d.jwtKey, queriesRo, projectsRepo))
+	sharedMW := authn.NewMiddleware(pogrpc.WithDualAuthKeyring(d.jwtKeys, queriesRo, projectsRepo))
 
 	// Handlers — grouped by auth boundary
 
 	// Public
-	authServer, err := auth.NewServer(ctx, d.pgRo, d.pgW, d.jwtKey, d.nats, d.demoEnabled)
+	authServer, err := auth.NewServerWithKeyring(ctx, d.pgRo, d.pgW, d.jwtKeys, d.nats, d.demoEnabled)
 	if err != nil {
 		return fmt.Errorf("auth server: %w", err)
 	}

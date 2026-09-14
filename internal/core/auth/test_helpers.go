@@ -7,6 +7,7 @@ import (
 	coreoauth "github.com/pug-sh/pug/internal/core/auth/oauth"
 	"github.com/pug-sh/pug/internal/gen/repo/dbread"
 	"github.com/pug-sh/pug/internal/gen/repo/dbwrite"
+	"github.com/pug-sh/pug/internal/security/jwtkeyring"
 )
 
 // NewServiceForTest wires an auth Service with empty OAuth provider config and
@@ -30,7 +31,7 @@ func NewServiceWithOAuthForTest(
 		read:      dbread.New(pgRO),
 		write:     dbwrite.New(pgW),
 		pgW:       pgW,
-		jwtKey:    jwtKey,
+		jwtKeys:   jwtkeyring.Single(jwtKey),
 		publisher: publisher,
 		oauth:     oauthSvc,
 	}

@@ -56,11 +56,18 @@ docker compose \
   up -d --build
 ```
 
-Both generators refuse to overwrite existing material. The base env, Session
-Gateway encryption key, TLS private key, and bootstrap result are mode `0600`,
+Both generators refuse to overwrite existing material. The base env, JWT
+keyring, Session Gateway encryption key, TLS private key, and bootstrap result are mode `0600`,
 and the entire `.local` directory is ignored by Git. The Dashboard image is
 built separately because its source lives in the sibling `pug-app` repository;
 Compose uses `pull_policy: never` so it cannot silently pull an unrelated image.
+
+`PUG_L1_RAW_EVENTS_RETENTION` is optional. A Test deployment may set it to a
+whole number of days between `24h` and `336h`; an empty Test value explicitly
+removes a TTL installed by this control. Outside `PUG_ENVIRONMENT=test`, an
+empty value leaves upstream retention unchanged and a non-empty value is
+rejected. This Test-only control must not be reused as a Production retention
+policy.
 
 Create the first operator, org, project, and keys exactly once:
 
