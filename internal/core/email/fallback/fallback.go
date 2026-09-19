@@ -10,6 +10,7 @@ import (
 	coreemail "github.com/pug-sh/pug/internal/core/email"
 	resenddeps "github.com/pug-sh/pug/internal/deps/email/resend"
 	sesdeps "github.com/pug-sh/pug/internal/deps/email/ses"
+	smtpdeps "github.com/pug-sh/pug/internal/deps/email/smtp"
 	"github.com/sethvargo/go-envconfig"
 )
 
@@ -20,11 +21,12 @@ type ProviderName string
 const (
 	ProviderResend ProviderName = "resend"
 	ProviderSES    ProviderName = "ses"
+	ProviderSMTP   ProviderName = "smtp"
 )
 
 func (n ProviderName) Valid() bool {
 	switch n {
-	case ProviderResend, ProviderSES:
+	case ProviderResend, ProviderSES, ProviderSMTP:
 		return true
 	}
 	return false
@@ -35,7 +37,7 @@ type Config struct {
 }
 
 // NewProvider builds the operator-configured Provider chosen by
-// PUG_EMAIL_PROVIDER (resend | ses). Used as the fallback when no per-tenant
+// PUG_EMAIL_PROVIDER (resend | ses | smtp). Used as the fallback when no per-tenant
 // provider is set for an org.
 func NewProvider(ctx context.Context) (coreemail.Provider, error) {
 	var cfg Config
@@ -43,7 +45,7 @@ func NewProvider(ctx context.Context) (coreemail.Provider, error) {
 		return nil, err
 	}
 	if !cfg.Name.Valid() {
-		return nil, fmt.Errorf("email: unsupported fallback provider %q (set PUG_EMAIL_PROVIDER to one of: resend, ses)", cfg.Name)
+		return nil, fmt.Errorf("email: unsupported fallback provider %q (set PUG_EMAIL_PROVIDER to one of: resend, ses, smtp)", cfg.Name)
 	}
 	switch cfg.Name {
 	case ProviderResend:
@@ -58,6 +60,12 @@ func NewProvider(ctx context.Context) (coreemail.Provider, error) {
 			return nil, err
 		}
 		return sesdeps.New(ctx, sesCfg)
+	case ProviderSMTP:
+		var smtpCfg smtpdeps.Config
+		if err := envconfig.Process(ctx, &smtpCfg); err != nil {
+			return nil, err
+		}
+		return smtpdeps.New(smtpCfg)
 	}
 	// Unreachable because of Valid() above, but the compiler doesn't know that.
 	return nil, fmt.Errorf("email: unsupported fallback provider %q", cfg.Name)

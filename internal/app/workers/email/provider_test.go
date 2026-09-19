@@ -9,6 +9,7 @@ import (
 	"github.com/pug-sh/pug/internal/core/email/fallback"
 	resenddeps "github.com/pug-sh/pug/internal/deps/email/resend"
 	sesdeps "github.com/pug-sh/pug/internal/deps/email/ses"
+	smtpdeps "github.com/pug-sh/pug/internal/deps/email/smtp"
 )
 
 func TestNewFallbackProviderResend(t *testing.T) {
@@ -49,6 +50,36 @@ func TestNewFallbackProviderSES(t *testing.T) {
 	}
 	if _, ok := provider.(*sesdeps.Provider); !ok {
 		t.Fatalf("expected *ses.Provider, got %T", provider)
+	}
+}
+
+func TestNewFallbackProviderSMTP(t *testing.T) {
+	t.Setenv("PUG_EMAIL_PROVIDER", "smtp")
+	t.Setenv("PUG_SMTP_HOST", "smtp.example.com")
+	t.Setenv("PUG_SMTP_PORT", "587")
+	t.Setenv("PUG_SMTP_USERNAME", "operator@example.com")
+	t.Setenv("PUG_SMTP_PASSWORD", "app-password")
+	t.Setenv("PUG_SMTP_USE_TLS", "true")
+
+	provider, err := fallback.NewProvider(context.Background())
+	if err != nil {
+		t.Fatalf("fallback.NewProvider: %v", err)
+	}
+	if _, ok := provider.(*smtpdeps.Provider); !ok {
+		t.Fatalf("expected *smtp.Provider, got %T", provider)
+	}
+}
+
+func TestNewFallbackProviderSMTPRequiresHost(t *testing.T) {
+	t.Setenv("PUG_EMAIL_PROVIDER", "smtp")
+	t.Setenv("PUG_SMTP_HOST", "")
+
+	_, err := fallback.NewProvider(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "host required") {
+		t.Fatalf("expected missing host error, got %v", err)
 	}
 }
 
