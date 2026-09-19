@@ -19,11 +19,11 @@ import (
 )
 
 type Config struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	UseTLS   bool
+	Host     string `env:"PUG_SMTP_HOST,required"`
+	Port     int    `env:"PUG_SMTP_PORT,default=587"`
+	Username string `env:"PUG_SMTP_USERNAME"`
+	Password string `env:"PUG_SMTP_PASSWORD"`
+	UseTLS   bool   `env:"PUG_SMTP_USE_TLS,default=true"`
 }
 
 type Provider struct {

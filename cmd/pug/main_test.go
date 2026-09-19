@@ -95,6 +95,36 @@ func TestEmailDevStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("smtp requires host", func(t *testing.T) {
+		t.Setenv("PUG_DASHBOARD_BASE_URL", "https://dashboard.example")
+		t.Setenv("PUG_EMAIL_FROM", "noreply@example.com")
+		t.Setenv("PUG_EMAIL_PROVIDER", "smtp")
+		t.Setenv("PUG_SMTP_HOST", "")
+
+		enabled, status := emailDevStatus()
+		if enabled {
+			t.Fatal("expected email worker to be disabled")
+		}
+		if want := "disabled (missing PUG_SMTP_HOST for smtp)"; status != want {
+			t.Fatalf("status = %q, want %q", status, want)
+		}
+	})
+
+	t.Run("smtp enabled when configured", func(t *testing.T) {
+		t.Setenv("PUG_DASHBOARD_BASE_URL", "https://dashboard.example")
+		t.Setenv("PUG_EMAIL_FROM", "noreply@example.com")
+		t.Setenv("PUG_EMAIL_PROVIDER", "smtp")
+		t.Setenv("PUG_SMTP_HOST", "smtp.example.com")
+
+		enabled, status := emailDevStatus()
+		if !enabled {
+			t.Fatal("expected email worker to be enabled")
+		}
+		if want := "email"; status != want {
+			t.Fatalf("status = %q, want %q", status, want)
+		}
+	})
+
 	t.Run("unsupported provider is disabled", func(t *testing.T) {
 		t.Setenv("PUG_DASHBOARD_BASE_URL", "https://dashboard.example")
 		t.Setenv("PUG_EMAIL_FROM", "noreply@example.com")

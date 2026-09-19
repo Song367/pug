@@ -110,6 +110,11 @@ func emailDevStatus() (bool, string) {
 		return true, "email"
 	case "ses":
 		return true, "email"
+	case "smtp":
+		if os.Getenv("PUG_SMTP_HOST") == "" {
+			return false, "disabled (missing PUG_SMTP_HOST for smtp)"
+		}
+		return true, "email"
 	default:
 		return false, fmt.Sprintf("disabled (unsupported provider %q)", provider)
 	}
