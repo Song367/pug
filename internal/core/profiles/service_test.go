@@ -156,7 +156,7 @@ func TestProfilesList_NoInflationWhenExternalIDEqualsAliasID(t *testing.T) {
 	// emitted once and its states row is merged once.
 	sessionID := uuid.NewString()
 	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, "shared-id", "page_view", sessionID,
-		map[string]string{"$browser": "Chrome", "$country": "US"},
+		map[string]string{"$url": "https://onlyf.test/feed", "$browser": "Chrome", "$country": "US"},
 		map[string]string{},
 		now,
 	)
@@ -191,5 +191,56 @@ func TestProfilesList_NoInflationWhenExternalIDEqualsAliasID(t *testing.T) {
 	}
 	if a.Country != "US" {
 		t.Errorf("Country = %q, want \"US\"", a.Country)
+	}
+}
+
+func TestProfilesList_WebContextSurvivesBackendEventsAndEmptyFields(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	ch := testutil.SetupClickHouse(t)
+	ctx := context.Background()
+	projectID := "proj-web-context"
+	distinctID := "anon-web-context"
+	first := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Minute)
+
+	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, distinctID, "page_view", uuid.NewString(),
+		map[string]string{
+			"$url": "https://onlyf.test/editor", "$browser": "Chrome", "$browserVersion": "140",
+			"$os": "macOS", "$osVersion": "15.6", "$country": "US", "$region": "California", "$city": "San Francisco",
+		}, map[string]string{}, first)
+	// Domain events have no URL and no web context. They still count and update
+	// last_seen, but must not erase the browser/device/geo snapshot.
+	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, distinctID, "generation.succeeded", uuid.NewString(),
+		map[string]string{}, map[string]string{}, first.Add(time.Minute))
+	// A later web event updates non-empty fields independently. Empty city must
+	// preserve the most recent non-empty city from the earlier web event.
+	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, distinctID, "page_view", uuid.NewString(),
+		map[string]string{
+			"$url": "https://onlyf.test/profile", "$browser": "Safari", "$browserVersion": "26",
+			"$os": "macOS", "$osVersion": "26", "$country": "US", "$region": "California",
+		}, map[string]string{}, first.Add(2*time.Minute))
+
+	service := profiles.NewService(nil, ch.Conn, nil)
+	profile, err := service.GetByID(ctx, projectID, distinctID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if profile.Activity == nil {
+		t.Fatal("Activity is nil")
+	}
+	a := profile.Activity
+	if a.TotalEvents != 3 || a.Pageviews != 2 {
+		t.Errorf("counts = events:%d pageviews:%d, want 3/2", a.TotalEvents, a.Pageviews)
+	}
+	if a.Browser != "Safari" || a.BrowserVersion != "26" || a.OS != "macOS" || a.OSVersion != "26" {
+		t.Errorf("latest web UA context = %+v", a)
+	}
+	if a.Country != "US" || a.Region != "California" || a.City != "San Francisco" {
+		t.Errorf("latest non-empty geo context = country:%q region:%q city:%q", a.Country, a.Region, a.City)
+	}
+	if a.LastSeen.Unix() != first.Add(2*time.Minute).Unix() {
+		t.Errorf("LastSeen = %v, want %v", a.LastSeen, first.Add(2*time.Minute))
 	}
 }
