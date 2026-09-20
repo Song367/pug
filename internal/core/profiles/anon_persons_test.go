@@ -41,9 +41,9 @@ func TestProfilesList_IncludesAnonymousPersons(t *testing.T) {
 
 	session := uuid.NewString()
 	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, "anon-1", "page_view", session,
-		map[string]string{"$browser": "Chrome", "$country": "US"}, map[string]string{}, first)
+		map[string]string{"$url": "https://onlyf.test/feed", "$browser": "Chrome", "$country": "US"}, map[string]string{}, first)
 	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, "anon-1", "click", session,
-		map[string]string{"$browser": "Chrome", "$country": "US"}, map[string]string{}, last)
+		map[string]string{"$url": "https://onlyf.test/feed", "$browser": "Chrome", "$country": "US"}, map[string]string{}, last)
 
 	// An identified profile created after the anon person's first-seen, so the
 	// list order (create_time DESC) is deterministic.
@@ -290,9 +290,9 @@ func TestProfilesList_FiltersApplyToAnonymousPersons(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, "anon-chrome", "page_view", uuid.NewString(),
-		map[string]string{"$browser": "Chrome"}, map[string]string{}, now)
+		map[string]string{"$url": "https://onlyf.test/feed", "$browser": "Chrome"}, map[string]string{}, now)
 	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, "anon-safari", "page_view", uuid.NewString(),
-		map[string]string{"$browser": "Safari"}, map[string]string{}, now)
+		map[string]string{"$url": "https://onlyf.test/feed", "$browser": "Safari"}, map[string]string{}, now)
 
 	if err := ch.Conn.Exec(ctx,
 		`INSERT INTO profiles (id, project_id, external_id, properties, is_deleted, create_time, update_time) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -301,7 +301,7 @@ func TestProfilesList_FiltersApplyToAnonymousPersons(t *testing.T) {
 		t.Fatalf("seed profile: %v", err)
 	}
 	testutil.InsertEvent(ctx, t, ch.Conn, uuid.NewString(), projectID, "ext-pro", "page_view", uuid.NewString(),
-		map[string]string{"$browser": "Chrome"}, map[string]string{}, now)
+		map[string]string{"$url": "https://onlyf.test/feed", "$browser": "Chrome"}, map[string]string{}, now)
 
 	service := profiles.NewService(nil, ch.Conn, nil)
 	listIDs := func(cond chq.Condition) map[string]bool {

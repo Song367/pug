@@ -44,6 +44,10 @@ var (
 	cookielessSessionDegradedCounter metric.Int64Counter
 	cookielessIdentitySourceCounter  metric.Int64Counter
 	ingestRejectedCounter            metric.Int64Counter
+	geoEnrichmentCounter             metric.Int64Counter
+	uaEnrichmentCounter              metric.Int64Counter
+	collectorAcceptedCounter         metric.Int64Counter
+	collectorDroppedCounter          metric.Int64Counter
 )
 
 func init() {
@@ -75,6 +79,22 @@ func init() {
 	ingestRejectedCounter, _ = meter.Int64Counter(
 		"events.ingest_rejected_total",
 		metric.WithDescription("An authenticated ingest request was rejected by the in-process second-layer guard. reason=rate_limit means a project/client token bucket was empty; reason=concurrency_limit means an active-request ceiling was reached."),
+	)
+	geoEnrichmentCounter, _ = meter.Int64Counter(
+		"events.geo_enrichment_total",
+		metric.WithDescription("Accepted events by server-side geographic enrichment result. result=enriched|missing; no IP or raw header values are recorded."),
+	)
+	uaEnrichmentCounter, _ = meter.Int64Counter(
+		"events.ua_enrichment_total",
+		metric.WithDescription("Accepted events by user-agent enrichment result. result=enriched|missing|parser_unavailable; the raw User-Agent is never recorded."),
+	)
+	collectorAcceptedCounter, _ = meter.Int64Counter(
+		"events.collector_accepted_total",
+		metric.WithDescription("Events accepted and published by the collector."),
+	)
+	collectorDroppedCounter, _ = meter.Int64Counter(
+		"events.collector_dropped_total",
+		metric.WithDescription("Events refused before publication, grouped by a controlled low-cardinality reason."),
 	)
 }
 
@@ -225,6 +245,10 @@ func (s *Server) BatchCreate(
 				attribute.String("project_id", principal.Project.ID),
 				attribute.String("reason", string(reason)),
 			))
+			collectorDroppedCounter.Add(ctx, int64(len(events)), metric.WithAttributes(
+				attribute.String("project_id", principal.Project.ID),
+				attribute.String("reason", string(reason)),
+			))
 			switch reason {
 			case rpc.IngestLimitConcurrency:
 				return nil, apperr.Err(connect.CodeResourceExhausted, apperr.ReasonIngestConcurrencyLimited, "ingest concurrency limit exceeded")
@@ -246,6 +270,10 @@ func (s *Server) BatchCreate(
 	}
 
 	if err := coreevents.ValidateExternalEvents(events); err != nil {
+		collectorDroppedCounter.Add(ctx, int64(len(events)), metric.WithAttributes(
+			attribute.String("project_id", principal.Project.ID),
+			attribute.String("reason", "invalid_event_batch"),
+		))
 		return nil, apperr.Invalid(apperr.ReasonInvalidEventBatch, err.Error())
 	}
 
@@ -253,6 +281,12 @@ func (s *Server) BatchCreate(
 	events, drops, err := s.resolveCookieless(ctx, projectID, req.Header(), req.Peer().Addr, events)
 	if err != nil {
 		return nil, err
+	}
+	for reason, count := range drops {
+		collectorDroppedCounter.Add(ctx, int64(count), metric.WithAttributes(
+			attribute.String("project_id", projectID),
+			attribute.String("reason", reason),
+		))
 	}
 	if len(events) == 0 {
 		// Every event was refused. Still OK, not an error — but the response now
@@ -269,22 +303,28 @@ func (s *Server) BatchCreate(
 	if err := s.publisher.Publish(ctx, principal.Project.ID, events); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to accept events"))
 	}
+	collectorAcceptedCounter.Add(ctx, int64(len(events)), metric.WithAttributes(
+		attribute.String("project_id", principal.Project.ID),
+	))
 
 	return batchResponse(len(events), drops), nil
 }
 
 func (s *Server) enrichUserAgent(ctx context.Context, projectID string, h http.Header, events []*eventsv1.Event) {
 	if s.uaParser == nil {
+		uaEnrichmentCounter.Add(ctx, int64(len(events)), metric.WithAttributes(attribute.String("project_id", projectID), attribute.String("result", "parser_unavailable")))
 		slog.WarnContext(ctx, "user-agent enrichment skipped: parser not initialized", slog.String("project_id", projectID))
 		return
 	}
 	props := s.uaParser.Parse(h)
 	if len(props) == 0 {
+		uaEnrichmentCounter.Add(ctx, int64(len(events)), metric.WithAttributes(attribute.String("project_id", projectID), attribute.String("result", "missing")))
 		slog.DebugContext(ctx, "user-agent enrichment skipped",
 			slog.String("project_id", projectID),
 			slog.Bool("header_present", h.Get("User-Agent") != ""))
 		return
 	}
+	uaEnrichmentCounter.Add(ctx, int64(len(events)), metric.WithAttributes(attribute.String("project_id", projectID), attribute.String("result", "enriched")))
 	for _, event := range events {
 		if event.AutoProperties == nil {
 			event.AutoProperties = make(map[string]*commonv1.PropertyValue, len(props))
@@ -320,9 +360,11 @@ func (s *Server) enrichGeo(ctx context.Context, projectID string, h http.Header,
 	}
 	delete(loc, geo.PropIP)
 	if len(loc) == 0 {
+		geoEnrichmentCounter.Add(ctx, int64(len(events)), metric.WithAttributes(attribute.String("project_id", projectID), attribute.String("result", "missing")))
 		slog.DebugContext(ctx, "geo location empty, skipping enrichment", slog.String("project_id", projectID))
 		return
 	}
+	geoEnrichmentCounter.Add(ctx, int64(len(events)), metric.WithAttributes(attribute.String("project_id", projectID), attribute.String("result", "enriched")))
 	for _, event := range events {
 		if event.AutoProperties == nil {
 			event.AutoProperties = make(map[string]*commonv1.PropertyValue, len(loc))
@@ -533,6 +575,10 @@ func (s *Server) resolveCookieless(ctx context.Context, projectID string, h http
 		// one of their batches was now being refused. Client input, so it is
 		// counted and logged at warn — not RecordError'd.
 		cookielessDroppedCounter.Add(ctx, int64(len(events)), metric.WithAttributes(
+			attribute.String("project_id", projectID),
+			attribute.String("reason", dropReasonIdentityHeadersMissing),
+		))
+		collectorDroppedCounter.Add(ctx, int64(len(events)), metric.WithAttributes(
 			attribute.String("project_id", projectID),
 			attribute.String("reason", dropReasonIdentityHeadersMissing),
 		))
