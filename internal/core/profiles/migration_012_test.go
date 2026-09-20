@@ -13,7 +13,7 @@ func TestMigration012UsesConditionalWebContextStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read migration 012: %v", err)
 	}
-	up := strings.Split(string(raw), "-- +goose Down")[0]
+	up, _, _ := strings.Cut(string(raw), "-- +goose Down")
 	for _, field := range []string{"browser", "browser_version", "os", "os_version", "device", "country", "region", "city"} {
 		want := "argMaxIfState(" + field + ", occur_time, url != '' AND " + field + " != '')"
 		if got := strings.Count(up, want); got != 2 {
