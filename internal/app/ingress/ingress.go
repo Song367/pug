@@ -24,6 +24,7 @@ import (
 	pogrpc "github.com/pug-sh/pug/internal/app/server/rpc"
 	"github.com/pug-sh/pug/internal/deps/telemetry"
 	"github.com/pug-sh/pug/internal/gen/proto/sdk/events/v1/eventsv1connect"
+	"github.com/pug-sh/pug/internal/gen/proto/sdk/profiles/v1/sdkprofilesv1connect"
 	"github.com/pug-sh/pug/internal/geo"
 	"github.com/sethvargo/go-envconfig"
 )
@@ -249,7 +250,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok\n")
 		return
 	}
-	if r.URL.Path != eventsv1connect.EventsServiceBatchCreateProcedure {
+	if !isAllowedIngestPath(r.URL.Path) {
 		h.reject(w, r, http.StatusNotFound, "path", "not found")
 		return
 	}
@@ -293,6 +294,16 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.ContentLength = int64(len(body))
 	r = r.WithContext(context.WithValue(r.Context(), clientIPContextKey{}, clientIP))
 	h.proxy.ServeHTTP(w, r)
+}
+
+func isAllowedIngestPath(path string) bool {
+	switch path {
+	case eventsv1connect.EventsServiceBatchCreateProcedure,
+		sdkprofilesv1connect.ProfilesSDKServiceIdentifyProcedure:
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *handler) reject(w http.ResponseWriter, r *http.Request, status int, reason, message string) {

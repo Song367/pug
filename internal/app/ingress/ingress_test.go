@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/pug-sh/pug/internal/gen/proto/sdk/events/v1/eventsv1connect"
+	"github.com/pug-sh/pug/internal/gen/proto/sdk/profiles/v1/sdkprofilesv1connect"
 )
 
 type captureTransport struct {
@@ -80,6 +81,41 @@ func ingestRequest(body string) *http.Request {
 	req.Header.Set("Content-Type", "application/proto")
 	req.Header.Set("X-Api-Key", "pub_test")
 	return req
+}
+
+func identifyRequest(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, sdkprofilesv1connect.ProfilesSDKServiceIdentifyProcedure, strings.NewReader(body))
+	req.RemoteAddr = "192.0.2.10:4321"
+	req.Header.Set("Content-Type", "application/proto")
+	req.Header.Set("X-Api-Key", "priv_test")
+	return req
+}
+
+func TestIngressForwardsProfilesIdentifyThroughCollectorGuards(t *testing.T) {
+	capture := &captureTransport{}
+	h := makeHandler(t, testConfig(), capture)
+	req := identifyRequest("profile-identify")
+	req.Header.Set("Authorization", "Bearer must-not-pass")
+	req.Header.Set("CF-IPCountry", "US")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	forwarded, body, calls := capture.snapshot()
+	if calls != 1 || body != "profile-identify" {
+		t.Fatalf("upstream calls/body = %d/%q", calls, body)
+	}
+	if got := forwarded.URL.Path; got != sdkprofilesv1connect.ProfilesSDKServiceIdentifyProcedure {
+		t.Fatalf("upstream path = %q", got)
+	}
+	if forwarded.Header.Get("Authorization") != "" || forwarded.Header.Get("CF-IPCountry") != "" {
+		t.Fatal("non-allowlisted headers reached profiles upstream")
+	}
+	if got := forwarded.Header.Get("X-Api-Key"); got != "priv_test" {
+		t.Fatalf("X-Api-Key = %q", got)
+	}
 }
 
 func TestIngressForwardsOnlyAllowlistedHeadersAndKernelPeer(t *testing.T) {
