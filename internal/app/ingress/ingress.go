@@ -24,6 +24,7 @@ import (
 	pogrpc "github.com/pug-sh/pug/internal/app/server/rpc"
 	"github.com/pug-sh/pug/internal/deps/telemetry"
 	"github.com/pug-sh/pug/internal/gen/proto/sdk/events/v1/eventsv1connect"
+	"github.com/pug-sh/pug/internal/gen/proto/sdk/profiles/v1/sdkprofilesv1connect"
 	"github.com/pug-sh/pug/internal/geo"
 	"github.com/sethvargo/go-envconfig"
 )
@@ -249,11 +250,13 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok\n")
 		return
 	}
-	if r.URL.Path != eventsv1connect.EventsServiceBatchCreateProcedure {
+	isEvents := r.URL.Path == eventsv1connect.EventsServiceBatchCreateProcedure
+	isIdentify := r.URL.Path == sdkprofilesv1connect.ProfilesSDKServiceIdentifyProcedure
+	if !isEvents && !isIdentify {
 		h.reject(w, r, http.StatusNotFound, "path", "not found")
 		return
 	}
-	if r.Method != http.MethodPost && r.Method != http.MethodOptions {
+	if r.Method != http.MethodPost && !(isEvents && r.Method == http.MethodOptions) {
 		h.reject(w, r, http.StatusMethodNotAllowed, "method", "method not allowed")
 		return
 	}

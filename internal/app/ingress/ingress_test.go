@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/pug-sh/pug/internal/gen/proto/sdk/events/v1/eventsv1connect"
+	"github.com/pug-sh/pug/internal/gen/proto/sdk/profiles/v1/sdkprofilesv1connect"
 )
 
 type captureTransport struct {
@@ -118,6 +119,28 @@ func TestIngressForwardsOnlyAllowlistedHeadersAndKernelPeer(t *testing.T) {
 	}
 }
 
+func TestIngressForwardsProfileIdentifyWithPrivateKey(t *testing.T) {
+	capture := &captureTransport{}
+	h := makeHandler(t, testConfig(), capture)
+	req := httptest.NewRequest(http.MethodPost, sdkprofilesv1connect.ProfilesSDKServiceIdentifyProcedure, strings.NewReader(`{"externalId":"test-hmac"}`))
+	req.RemoteAddr = "192.0.2.10:4321"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "private-test-key")
+	req.Header.Set("Cookie", "must-not-pass")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	forwarded, body, calls := capture.snapshot()
+	if calls != 1 || forwarded.URL.Path != sdkprofilesv1connect.ProfilesSDKServiceIdentifyProcedure || body != `{"externalId":"test-hmac"}` {
+		t.Fatalf("Identify forwarding = path %q, body %q, calls %d", forwarded.URL.Path, body, calls)
+	}
+	if forwarded.Header.Get("X-Api-Key") != "private-test-key" || forwarded.Header.Get("Cookie") != "" {
+		t.Fatal("Identify credentials were not forwarded safely")
+	}
+}
+
 func TestIngressPublishesCorrespondingSourceWithoutCallingUpstream(t *testing.T) {
 	for _, path := range []string{sourceCodePath, wellKnownSourcePath} {
 		t.Run(path, func(t *testing.T) {
@@ -200,6 +223,10 @@ func TestIngressRejectsNonCollectorRoutesMethodsAndLargePayloads(t *testing.T) {
 		},
 		"method": {
 			req:  httptest.NewRequest(http.MethodGet, eventsv1connect.EventsServiceBatchCreateProcedure, nil),
+			want: http.StatusMethodNotAllowed,
+		},
+		"identify options": {
+			req:  httptest.NewRequest(http.MethodOptions, sdkprofilesv1connect.ProfilesSDKServiceIdentifyProcedure, nil),
 			want: http.StatusMethodNotAllowed,
 		},
 		"payload": {
